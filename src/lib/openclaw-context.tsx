@@ -259,13 +259,11 @@ export function OpenClawProvider({ children }: { children: ReactNode }) {
     async (params: SpawnTaskParams) => {
       const client = clientRef.current;
       if (!client?.connected) throw new Error("Not connected");
-      const result = await client.request("sessions.spawn", {
+      const result = await client.request("sessions.create", {
         task: params.task,
         agentId: params.agentId || undefined,
         model: params.model || undefined,
-        mode: params.mode || "run",
         label: params.label || undefined,
-        runtime: "subagent",
       });
       await fetchAll();
       return result;

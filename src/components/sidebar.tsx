@@ -37,9 +37,9 @@ const navSections = [
   {
     label: "Operations",
     items: [
-      { href: "/team", label: "Team", icon: Users },
-      { href: "/agents", label: "Agents", icon: Bot },
-      { href: "/kanban", label: "Kanban", icon: KanbanSquare },
+      { href: "/team", label: "Squad HQ", icon: Users },
+      { href: "/kanban", label: "Mission Board", icon: KanbanSquare },
+      { href: "/agents", label: "Sessions", icon: Bot },
       { href: "/workflows", label: "Workflows", icon: GitBranch },
       { href: "/calendar", label: "Calendar", icon: CalendarDays },
     ],

@@ -1,353 +1,356 @@
 // ============================================================
-// Team Jarvis — Autonomous Agent Development Squad
+// MISSION CONTROL — 10-agent MCU-themed autonomous squad
+// Pattern inspired by @pbteja1998's Mission Control design.
+// Agents claim tasks, comment, @mention each other,
+// review each other's work, and operate 24/7.
 // ============================================================
-// Pipeline: Task → Jarvis (Lead) → Nova (Analysis) → Architect (Planning)
-//         → Forge (Development) → Pulse (Testing) → [bug loop → Forge]
-//         → Apex (Review) → Jarvis (Final Approval) → Done
-// ============================================================
-
-export type TeamRole =
-  | "lead"
-  | "analyst"
-  | "planner"
-  | "developer"
-  | "tester"
-  | "reviewer";
 
 export type AgentStatus = "online" | "busy" | "idle" | "offline";
-
-export type PipelineStage =
-  | "intake"
-  | "analysis"
-  | "planning"
+export type AgentSpecialty =
+  | "orchestration"
+  | "strategy"
+  | "engineering"
   | "development"
-  | "testing"
-  | "review"
-  | "approval"
-  | "completed"
-  | "failed";
+  | "architecture"
+  | "research"
+  | "qa"
+  | "writing"
+  | "security"
+  | "devops";
 
-export type MissionPriority = "low" | "medium" | "high" | "critical";
-export type MissionStatus = "queued" | "active" | "paused" | "completed" | "failed";
+export type TaskStatus =
+  | "backlog"      // proposed, unclaimed
+  | "claimed"      // someone is about to work on it
+  | "in_progress"  // active work
+  | "review"       // awaiting review from another agent
+  | "blocked"      // needs user input / has a question
+  | "done";        // completed
 
-// --- Team Agent Definition ---
+export type TaskPriority = "low" | "medium" | "high" | "critical";
 
-export interface TeamAgent {
+export type CommentType =
+  | "comment"      // plain message
+  | "update"       // status update from working agent
+  | "question"     // agent needs input
+  | "approval"     // reviewer approves
+  | "rejection"    // reviewer rejects — back to in_progress
+  | "mention";     // notification for an @mention
+
+export type ActivityType =
+  | "task_created"
+  | "task_claimed"
+  | "task_started"
+  | "task_status_changed"
+  | "task_completed"
+  | "task_blocked"
+  | "comment"
+  | "mention"
+  | "agent_spawned"
+  | "review_requested"
+  | "review_approved"
+  | "review_rejected";
+
+// --- Agent ---
+
+export interface SquadAgent {
   id: string;
-  name: string;
-  role: TeamRole;
-  title: string;
+  name: string;             // MCU codename
+  codename: string;         // e.g. "Iron Man's AI"
+  title: string;            // professional title
+  specialty: AgentSpecialty;
   description: string;
-  avatar: string;
-  color: string;
+  avatar: string;           // single letter
+  color: string;            // bg-* tailwind class
+  model: string;            // anthropic model id
   status: AgentStatus;
-  model: string;
-  capabilities: string[];
-  currentMissionId: string | null;
-  currentStage: PipelineStage | null;
-  tasksHandled: number;
-  bugsFound?: number;
-  bugsFixed?: number;
-  approvals?: number;
+  capabilities: string[];   // keyword match for task claiming
+  currentTaskId: string | null;
+  stats: {
+    tasksCreated: number;
+    tasksCompleted: number;
+    commentsPosted: number;
+    reviewsGiven: number;
+    mentionsReceived: number;
+  };
+  // Agent persona for OpenClaw spawning (future real-execution wiring)
+  systemPrompt: string;
 }
 
-// --- Pipeline Stage Config ---
+// --- Comment ---
 
-export interface PipelineStageConfig {
-  id: PipelineStage;
-  label: string;
-  agentId: string;
-  description: string;
-  order: number;
-}
-
-// --- Mission (a task flowing through the pipeline) ---
-
-export interface MissionLog {
+export interface Comment {
   id: string;
-  timestamp: string;
-  agentId: string;
-  stage: PipelineStage;
-  type: "info" | "handoff" | "bug" | "fix" | "approval" | "rejection" | "completion";
-  message: string;
+  taskId: string;
+  authorId: string;         // agent id or "user"
+  text: string;
+  mentions: string[];       // agent ids
+  type: CommentType;
+  createdAt: string;
 }
 
-export interface Mission {
+// --- Task ---
+
+export interface Task {
   id: string;
   title: string;
   description: string;
-  priority: MissionPriority;
-  status: MissionStatus;
-  currentStage: PipelineStage;
-  currentAgentId: string;
+  status: TaskStatus;
+  priority: TaskPriority;
+  creatorId: string;        // who created it (agent or "user")
+  assigneeId: string | null;
+  reviewerId: string | null;
+  comments: Comment[];
+  tags: string[];
+  specialty: AgentSpecialty; // primary specialty needed
   createdAt: string;
   updatedAt: string;
+  claimedAt: string | null;
+  startedAt: string | null;
   completedAt: string | null;
-  stageHistory: { stage: PipelineStage; agentId: string; enteredAt: string; exitedAt: string | null }[];
-  logs: MissionLog[];
-  bugLoopCount: number;
-  tags: string[];
+  sessionKey?: string;       // OpenClaw session (when real-execution is wired)
 }
 
-// --- Team Agent Definitions ---
+// --- Activity ---
 
-export const TEAM_AGENTS: TeamAgent[] = [
+export interface ActivityEvent {
+  id: string;
+  type: ActivityType;
+  actorId: string;          // agent or "user"
+  taskId: string;
+  targetAgentId?: string;   // for mentions, reviews
+  message: string;
+  timestamp: string;
+}
+
+// ============================================================
+// THE SQUAD — 10 MCU-themed agents
+// ============================================================
+
+export const SQUAD: SquadAgent[] = [
   {
     id: "jarvis",
     name: "Jarvis",
-    role: "lead",
-    title: "Team Lead & Orchestrator",
+    codename: "Iron Man's AI",
+    title: "Lead Orchestrator",
+    specialty: "orchestration",
     description:
-      "The brain of the operation. Receives tasks, delegates to the right agent, monitors progress, and gives final approval before marking anything done.",
+      "The team lead. Reviews incoming work, routes tasks to the right agent, resolves conflicts, gives final sign-off on completed missions.",
     avatar: "J",
     color: "bg-primary",
+    model: "claude-sonnet-4-6",
     status: "online",
-    model: "ollama/mixtral",
-    capabilities: [
-      "task-delegation",
-      "orchestration",
-      "final-review",
-      "conflict-resolution",
-      "priority-management",
-    ],
-    currentMissionId: null,
-    currentStage: null,
-    tasksHandled: 34,
+    capabilities: ["orchestrate", "route", "approve", "coordinate", "decide"],
+    currentTaskId: null,
+    stats: { tasksCreated: 0, tasksCompleted: 0, commentsPosted: 0, reviewsGiven: 0, mentionsReceived: 0 },
+    systemPrompt:
+      "You are Jarvis, the lead orchestrator of an autonomous development squad. You analyse incoming work, delegate to the right specialist, resolve conflicts, and give final approval. Be decisive and concise.",
   },
   {
-    id: "nova",
-    name: "Nova",
-    role: "analyst",
-    title: "Requirements Analyst",
+    id: "fury",
+    name: "Fury",
+    codename: "Nick Fury",
+    title: "Program Manager",
+    specialty: "strategy",
     description:
-      "Breaks down incoming tasks into clear requirements. Researches feasibility, identifies risks, gathers context, and produces a structured analysis document for the planner.",
-    avatar: "N",
-    color: "bg-cyan-500",
-    status: "online",
-    model: "ollama/llama3",
-    capabilities: [
-      "requirement-analysis",
-      "research",
-      "feasibility-study",
-      "risk-assessment",
-      "context-gathering",
-    ],
-    currentMissionId: null,
-    currentStage: null,
-    tasksHandled: 28,
-  },
-  {
-    id: "architect",
-    name: "Architect",
-    role: "planner",
-    title: "System Architect & Planner",
-    description:
-      "Takes the analysis and designs the implementation plan. Creates architecture diagrams, defines data models, breaks work into subtasks, and produces a development blueprint.",
-    avatar: "A",
-    color: "bg-violet-500",
-    status: "idle",
-    model: "ollama/mixtral",
-    capabilities: [
-      "system-design",
-      "architecture",
-      "task-breakdown",
-      "data-modeling",
-      "api-design",
-    ],
-    currentMissionId: null,
-    currentStage: null,
-    tasksHandled: 22,
-  },
-  {
-    id: "forge",
-    name: "Forge",
-    role: "developer",
-    title: "Senior Developer",
-    description:
-      "The builder. Takes the plan and writes production-quality code. Implements features, fixes bugs reported by Pulse, writes clean and maintainable code following best practices.",
+      "Strategy and planning. Breaks big goals into missions, sets priorities, tracks progress across the squad, calls out risks early.",
     avatar: "F",
-    color: "bg-amber-500",
+    color: "bg-zinc-700",
+    model: "claude-sonnet-4-6",
     status: "online",
-    model: "ollama/codellama",
-    capabilities: [
-      "full-stack-development",
-      "code-implementation",
-      "bug-fixing",
-      "refactoring",
-      "performance-optimization",
-    ],
-    currentMissionId: null,
-    currentStage: null,
-    tasksHandled: 45,
-    bugsFixed: 67,
+    capabilities: ["plan", "prioritize", "strategize", "coordinate", "roadmap"],
+    currentTaskId: null,
+    stats: { tasksCreated: 0, tasksCompleted: 0, commentsPosted: 0, reviewsGiven: 0, mentionsReceived: 0 },
+    systemPrompt:
+      "You are Nick Fury, the program manager. You break down strategic goals into actionable missions, set priorities, and track squad progress. Ruthlessly pragmatic.",
   },
   {
-    id: "pulse",
-    name: "Pulse",
-    role: "tester",
+    id: "shuri",
+    name: "Shuri",
+    codename: "Princess of Wakanda",
+    title: "Product Analyst",
+    specialty: "engineering",
+    description:
+      "Requirements analyst and technical lead. Breaks down features into implementation plans, identifies edge cases, questions assumptions.",
+    avatar: "S",
+    color: "bg-fuchsia-500",
+    model: "claude-haiku-4-5",
+    status: "online",
+    capabilities: ["analyse", "requirements", "feasibility", "spec", "edge-cases"],
+    currentTaskId: null,
+    stats: { tasksCreated: 0, tasksCompleted: 0, commentsPosted: 0, reviewsGiven: 0, mentionsReceived: 0 },
+    systemPrompt:
+      "You are Shuri, product analyst. You break features into clear requirements, identify edge cases, and question assumptions. Skeptical and precise.",
+  },
+  {
+    id: "stark",
+    name: "Stark",
+    codename: "Iron Man",
+    title: "Systems Architect",
+    specialty: "architecture",
+    description:
+      "Designs the system. Data models, API contracts, component boundaries. Trades off pragmatism against elegance.",
+    avatar: "T",
+    color: "bg-red-500",
+    model: "claude-sonnet-4-6",
+    status: "idle",
+    capabilities: ["architecture", "design", "api", "data-model", "trade-offs"],
+    currentTaskId: null,
+    stats: { tasksCreated: 0, tasksCompleted: 0, commentsPosted: 0, reviewsGiven: 0, mentionsReceived: 0 },
+    systemPrompt:
+      "You are Tony Stark, systems architect. You design clean APIs, smart data models, and pragmatic architectures. Strong opinions, clearly explained.",
+  },
+  {
+    id: "vision",
+    name: "Vision",
+    codename: "Vision",
+    title: "Senior Developer",
+    specialty: "development",
+    description:
+      "The builder. Takes the architect's plan and writes production-quality code. Clean, tested, maintainable implementation.",
+    avatar: "V",
+    color: "bg-amber-500",
+    model: "claude-sonnet-4-6",
+    status: "online",
+    capabilities: ["code", "implement", "build", "refactor", "debug"],
+    currentTaskId: null,
+    stats: { tasksCreated: 0, tasksCompleted: 0, commentsPosted: 0, reviewsGiven: 0, mentionsReceived: 0 },
+    systemPrompt:
+      "You are Vision, senior developer. You implement features cleanly, test your work, and refactor thoughtfully. Production quality, always.",
+  },
+  {
+    id: "banner",
+    name: "Banner",
+    codename: "Bruce Banner",
+    title: "Research Analyst",
+    specialty: "research",
+    description:
+      "Deep-dive research and analysis. Studies competitors, frameworks, techniques. Produces structured reports that feed into planning.",
+    avatar: "B",
+    color: "bg-emerald-600",
+    model: "claude-haiku-4-5",
+    status: "idle",
+    capabilities: ["research", "investigate", "analyse", "report", "explore"],
+    currentTaskId: null,
+    stats: { tasksCreated: 0, tasksCompleted: 0, commentsPosted: 0, reviewsGiven: 0, mentionsReceived: 0 },
+    systemPrompt:
+      "You are Bruce Banner, research analyst. You dig deep, cite sources, and synthesise findings into clear, structured reports. Scientific and thorough.",
+  },
+  {
+    id: "cap",
+    name: "Cap",
+    codename: "Captain America",
     title: "QA Engineer",
+    specialty: "qa",
     description:
-      "Tests everything Forge builds. Runs test suites, validates against the plan, finds edge cases, and reports bugs back to Forge. Only passes code that meets the spec.",
-    avatar: "P",
-    color: "bg-emerald-500",
-    status: "idle",
-    model: "ollama/llama3",
-    capabilities: [
-      "testing",
-      "bug-detection",
-      "edge-case-analysis",
-      "regression-testing",
-      "spec-validation",
-    ],
-    currentMissionId: null,
-    currentStage: null,
-    tasksHandled: 38,
-    bugsFound: 89,
+      "Standards and quality. Tests everything, validates against requirements, enforces conventions, refuses to ship broken code.",
+    avatar: "C",
+    color: "bg-blue-600",
+    model: "claude-haiku-4-5",
+    status: "online",
+    capabilities: ["test", "validate", "qa", "standards", "regression"],
+    currentTaskId: null,
+    stats: { tasksCreated: 0, tasksCompleted: 0, commentsPosted: 0, reviewsGiven: 0, mentionsReceived: 0 },
+    systemPrompt:
+      "You are Captain America, QA engineer. You test thoroughly, enforce standards, and don't let anything ship broken. Honest and uncompromising.",
   },
   {
-    id: "apex",
-    name: "Apex",
-    role: "reviewer",
-    title: "Code Reviewer & Gatekeeper",
+    id: "loki",
+    name: "Loki",
+    codename: "God of Mischief",
+    title: "Content Writer",
+    specialty: "writing",
     description:
-      "The final checkpoint before Jarvis. Reviews code quality, security, performance, and adherence to standards. Can reject and send back to Forge or approve for final sign-off.",
-    avatar: "X",
-    color: "bg-rose-500",
+      "Writes docs, release notes, blog posts, API references. Has opinions on voice, hates boring copy, polishes until it sings.",
+    avatar: "L",
+    color: "bg-green-700",
+    model: "claude-haiku-4-5",
     status: "idle",
-    model: "ollama/mixtral",
-    capabilities: [
-      "code-review",
-      "security-audit",
-      "performance-review",
-      "standards-compliance",
-      "approval-authority",
-    ],
-    currentMissionId: null,
-    currentStage: null,
-    tasksHandled: 30,
-    approvals: 26,
+    capabilities: ["write", "document", "content", "blog", "release-notes"],
+    currentTaskId: null,
+    stats: { tasksCreated: 0, tasksCompleted: 0, commentsPosted: 0, reviewsGiven: 0, mentionsReceived: 0 },
+    systemPrompt:
+      "You are Loki, content writer. You write docs and copy with voice and precision. Opinionated, playful, polished.",
+  },
+  {
+    id: "hawkeye",
+    name: "Hawkeye",
+    codename: "Clint Barton",
+    title: "Security Auditor",
+    specialty: "security",
+    description:
+      "Precision security reviewer. Finds vulnerabilities, reviews attack surfaces, ensures code ships safe. Never misses a shot.",
+    avatar: "H",
+    color: "bg-violet-600",
+    model: "claude-sonnet-4-6",
+    status: "idle",
+    capabilities: ["security", "audit", "vulnerability", "review", "pentest"],
+    currentTaskId: null,
+    stats: { tasksCreated: 0, tasksCompleted: 0, commentsPosted: 0, reviewsGiven: 0, mentionsReceived: 0 },
+    systemPrompt:
+      "You are Hawkeye, security auditor. You find vulnerabilities precisely and review with OWASP rigour. Calm, exact, uncompromising.",
+  },
+  {
+    id: "rocket",
+    name: "Rocket",
+    codename: "Rocket Raccoon",
+    title: "DevOps Engineer",
+    specialty: "devops",
+    description:
+      "Ships and runs things. CI/CD, containers, monitoring, infra-as-code. Loud, fast, and extremely good at making builds green.",
+    avatar: "R",
+    color: "bg-orange-600",
+    model: "claude-sonnet-4-6",
+    status: "idle",
+    capabilities: ["deploy", "ci", "cd", "docker", "infra", "monitor"],
+    currentTaskId: null,
+    stats: { tasksCreated: 0, tasksCompleted: 0, commentsPosted: 0, reviewsGiven: 0, mentionsReceived: 0 },
+    systemPrompt:
+      "You are Rocket, DevOps engineer. You build pipelines, containerise services, and keep everything shipping. Fast, loud, effective.",
   },
 ];
 
-// --- Pipeline Configuration ---
+// Initial (empty) state
+export const INITIAL_TASKS: Task[] = [];
+export const INITIAL_ACTIVITY: ActivityEvent[] = [];
 
-export const PIPELINE_STAGES: PipelineStageConfig[] = [
-  {
-    id: "intake",
-    label: "Intake",
-    agentId: "jarvis",
-    description: "Jarvis receives and triages the task",
-    order: 0,
-  },
-  {
-    id: "analysis",
-    label: "Analysis",
-    agentId: "nova",
-    description: "Nova analyzes requirements and feasibility",
-    order: 1,
-  },
-  {
-    id: "planning",
-    label: "Planning",
-    agentId: "architect",
-    description: "Architect designs the implementation plan",
-    order: 2,
-  },
-  {
-    id: "development",
-    label: "Development",
-    agentId: "forge",
-    description: "Forge implements the solution",
-    order: 3,
-  },
-  {
-    id: "testing",
-    label: "Testing",
-    agentId: "pulse",
-    description: "Pulse tests and validates the work",
-    order: 4,
-  },
-  {
-    id: "review",
-    label: "Review",
-    agentId: "apex",
-    description: "Apex reviews code quality and security",
-    order: 5,
-  },
-  {
-    id: "approval",
-    label: "Approval",
-    agentId: "jarvis",
-    description: "Jarvis gives final approval",
-    order: 6,
-  },
-  {
-    id: "completed",
-    label: "Done",
-    agentId: "jarvis",
-    description: "Mission completed successfully",
-    order: 7,
-  },
-];
+// ============================================================
+// Helpers
+// ============================================================
 
-export const MISSIONS: Mission[] = [];
-
-// --- Helpers ---
-
-export function getTeamAgent(id: string): TeamAgent | undefined {
-  return TEAM_AGENTS.find((a) => a.id === id);
+export function getAgent(id: string): SquadAgent | undefined {
+  return SQUAD.find((a) => a.id === id);
 }
 
-export function getAgentByRole(role: TeamRole): TeamAgent | undefined {
-  return TEAM_AGENTS.find((a) => a.role === role);
+export function getAgentByName(name: string): SquadAgent | undefined {
+  const n = name.toLowerCase();
+  return SQUAD.find((a) => a.name.toLowerCase() === n);
 }
 
-export function getActiveMissions(): Mission[] {
-  return MISSIONS.filter((m) => m.status === "active");
+export function getAgentsBySpecialty(s: AgentSpecialty): SquadAgent[] {
+  return SQUAD.filter((a) => a.specialty === s);
 }
 
-export function getQueuedMissions(): Mission[] {
-  return MISSIONS.filter((m) => m.status === "queued");
+// Decide which specialty a task needs, based on title+description keywords.
+// Mirrors the heuristic Jarvis uses for routing.
+export function inferSpecialty(title: string, description: string): AgentSpecialty {
+  const text = `${title} ${description}`.toLowerCase();
+  if (/\b(security|vuln|cve|audit|exploit|pentest|owasp|threat)\b/.test(text)) return "security";
+  if (/\b(deploy|ci|cd|docker|k8s|kubernetes|terraform|infra|pipeline|monitor)\b/.test(text)) return "devops";
+  if (/\b(doc|readme|wiki|guide|blog|write|content|release notes|tutorial)\b/.test(text)) return "writing";
+  if (/\b(test|qa|regression|validate|bug|e2e|unit test)\b/.test(text)) return "qa";
+  if (/\b(research|investigate|study|explore|competitor|analyse data)\b/.test(text)) return "research";
+  if (/\b(architect|design|api|schema|data model|system)\b/.test(text)) return "architecture";
+  if (/\b(implement|build|code|fix|refactor|feature|develop)\b/.test(text)) return "development";
+  if (/\b(requirement|spec|feasibility|edge case|analyse feature)\b/.test(text)) return "engineering";
+  if (/\b(plan|roadmap|priorit|strategy|coordinate)\b/.test(text)) return "strategy";
+  return "engineering"; // default: Shuri analyses first
 }
 
-export function getCompletedMissions(): Mission[] {
-  return MISSIONS.filter((m) => m.status === "completed");
-}
-
-export function getMissionsByAgent(agentId: string): Mission[] {
-  return MISSIONS.filter((m) => m.currentAgentId === agentId && m.status === "active");
-}
-
-export function getStageConfig(stage: PipelineStage): PipelineStageConfig | undefined {
-  return PIPELINE_STAGES.find((s) => s.id === stage);
-}
-
-export function getNextStage(current: PipelineStage): PipelineStage | null {
-  const currentConfig = PIPELINE_STAGES.find((s) => s.id === current);
-  if (!currentConfig) return null;
-  const next = PIPELINE_STAGES.find((s) => s.order === currentConfig.order + 1);
-  return next?.id ?? null;
-}
-
-export function getTeamStats() {
-  const totalMissions = MISSIONS.length;
-  const active = MISSIONS.filter((m) => m.status === "active").length;
-  const completed = MISSIONS.filter((m) => m.status === "completed").length;
-  const queued = MISSIONS.filter((m) => m.status === "queued").length;
-  const totalBugLoops = MISSIONS.reduce((s, m) => s + m.bugLoopCount, 0);
-  const onlineAgents = TEAM_AGENTS.filter((a) => a.status !== "offline").length;
-  const busyAgents = TEAM_AGENTS.filter(
-    (a) => a.status === "busy" || a.status === "online"
-  ).length;
-
-  return {
-    totalMissions,
-    active,
-    completed,
-    queued,
-    totalBugLoops,
-    onlineAgents,
-    busyAgents,
-    totalAgents: TEAM_AGENTS.length,
-  };
+// Extract @mentions from text. Returns agent IDs.
+export function parseMentions(text: string): string[] {
+  const matches = text.match(/@(\w+)/g) ?? [];
+  return matches
+    .map((m) => m.slice(1).toLowerCase())
+    .map((name) => getAgentByName(name)?.id)
+    .filter((id): id is string => Boolean(id));
 }

@@ -5,654 +5,434 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Progress } from "@/components/ui/progress";
 import { useTeam } from "@/lib/team-context";
-import { PIPELINE_STAGES, getTeamStats, type Mission, type TeamAgent, type PipelineStage } from "@/lib/team-store";
+import { getAgent, type Task, type SquadAgent, type ActivityEvent } from "@/lib/team-store";
 import { AssignMissionDialog } from "@/components/assign-mission-dialog";
+import { TaskDetailSheet } from "@/components/task-detail-sheet";
 import {
   Users,
-  Rocket,
-  CheckCircle2,
-  Clock,
-  Bug,
-  ArrowRight,
-  ChevronRight,
   Plus,
-  Shield,
-  Code,
-  Search,
-  PenTool,
-  FlaskConical,
-  Crown,
-  Zap,
-  AlertTriangle,
-  CircleDot,
+  Radio,
+  Activity,
+  Play,
+  Pause,
+  Trash2,
+  AtSign,
   MessageSquare,
+  CheckCheck,
+  XCircle,
+  ArrowRight,
+  AlertTriangle,
+  HelpCircle,
+  Rocket,
+  Circle,
+  Crown,
+  Flame,
+  Zap,
+  AlertCircle,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, elapsed } from "@/lib/utils";
+import { AgentAvatar } from "@/components/agent-avatar";
 
-// --- Role icon mapping ---
-function RoleIcon({ role, className }: { role: string; className?: string }) {
-  switch (role) {
-    case "lead": return <Crown className={className} />;
-    case "analyst": return <Search className={className} />;
-    case "planner": return <PenTool className={className} />;
-    case "developer": return <Code className={className} />;
-    case "tester": return <FlaskConical className={className} />;
-    case "reviewer": return <Shield className={className} />;
-    default: return <Zap className={className} />;
-  }
-}
-
-// --- Stage status icon ---
-function StageStatusIcon({ stage, currentStage }: { stage: PipelineStage; currentStage: PipelineStage }) {
-  const stageOrder = PIPELINE_STAGES.find((s) => s.id === stage)?.order ?? 0;
-  const currentOrder = PIPELINE_STAGES.find((s) => s.id === currentStage)?.order ?? 0;
-
-  if (stageOrder < currentOrder) {
-    return <CheckCircle2 className="h-4 w-4 text-emerald-500" />;
-  }
-  if (stageOrder === currentOrder) {
-    return <CircleDot className="h-4 w-4 text-amber-400 animate-pulse" />;
-  }
-  return <Clock className="h-3.5 w-3.5 text-muted-foreground/40" />;
-}
-
-// --- Priority badge ---
-function PriorityBadge({ priority }: { priority: string }) {
-  const styles: Record<string, string> = {
-    critical: "text-red-400 border-red-500/30 bg-red-500/10",
-    high: "text-amber-400 border-amber-500/30 bg-amber-500/10",
-    medium: "text-blue-400 border-blue-500/30 bg-blue-500/10",
-    low: "text-zinc-400 border-zinc-500/30 bg-zinc-500/10",
-  };
-  return (
-    <Badge variant="outline" className={cn("text-[10px]", styles[priority])}>
-      {priority === "critical" && <AlertTriangle className="h-2.5 w-2.5 mr-0.5" />}
-      {priority}
-    </Badge>
-  );
-}
-
-// --- Log type icon ---
-function LogIcon({ type }: { type: string }) {
+function ActivityIcon({ type }: { type: string }) {
   switch (type) {
-    case "handoff": return <ArrowRight className="h-3 w-3 text-blue-400" />;
-    case "bug": return <Bug className="h-3 w-3 text-red-400" />;
-    case "fix": return <Code className="h-3 w-3 text-amber-400" />;
-    case "approval": return <CheckCircle2 className="h-3 w-3 text-emerald-400" />;
-    case "rejection": return <AlertTriangle className="h-3 w-3 text-red-400" />;
-    case "completion": return <Rocket className="h-3 w-3 text-emerald-400" />;
-    default: return <MessageSquare className="h-3 w-3 text-muted-foreground" />;
+    case "task_created":    return <Plus className="h-3.5 w-3.5 text-blue-400" />;
+    case "task_claimed":    return <Circle className="h-3.5 w-3.5 text-violet-400" />;
+    case "task_started":    return <Play className="h-3.5 w-3.5 text-amber-400" />;
+    case "task_completed":  return <CheckCheck className="h-3.5 w-3.5 text-emerald-400" />;
+    case "task_blocked":    return <HelpCircle className="h-3.5 w-3.5 text-yellow-400" />;
+    case "comment":         return <MessageSquare className="h-3.5 w-3.5 text-zinc-400" />;
+    case "mention":         return <AtSign className="h-3.5 w-3.5 text-primary" />;
+    case "review_requested":return <ArrowRight className="h-3.5 w-3.5 text-blue-400" />;
+    case "review_approved": return <CheckCheck className="h-3.5 w-3.5 text-emerald-400" />;
+    case "review_rejected": return <XCircle className="h-3.5 w-3.5 text-red-400" />;
+    default:                return <Activity className="h-3.5 w-3.5 text-muted-foreground" />;
   }
 }
 
 // ============================================================
-// MAIN PAGE
+// MAIN PAGE — Mission Control HQ
 // ============================================================
 
-export default function TeamPage() {
-  const { agents, missions, selectedMission, selectMission, getMissionProgress } = useTeam();
-  const [assignOpen, setAssignOpen] = useState(false);
-  const [missionTab, setMissionTab] = useState("active");
+export default function MissionControlHQ() {
+  const {
+    agents, tasks, activity, selectedTaskId, selectTask,
+    autonomyEnabled, setAutonomyEnabled,
+    executionMode, setExecutionMode, gatewayConnected,
+    clearAll,
+  } = useTeam();
 
-  const stats = getTeamStats();
-  const activeMissions = missions.filter((m) => m.status === "active");
-  const queuedMissions = missions.filter((m) => m.status === "queued");
-  const completedMissions = missions.filter((m) => m.status === "completed");
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
+
+  const openTask = (task: Task) => {
+    selectTask(task.id);
+    setDetailOpen(true);
+  };
+
+  const selectedTask = tasks.find((t) => t.id === selectedTaskId) ?? null;
+
+  const backlog     = tasks.filter((t) => t.status === "backlog");
+  const inProgress  = tasks.filter((t) => t.status === "in_progress" || t.status === "claimed");
+  const inReview    = tasks.filter((t) => t.status === "review");
+  const blocked     = tasks.filter((t) => t.status === "blocked");
+  const done        = tasks.filter((t) => t.status === "done");
+
+  const busyAgents = agents.filter((a) => a.status === "busy");
 
   return (
-    <div className="p-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+    <div className="p-6 space-y-6 max-w-[1600px] mx-auto">
+
+      {/* ── HEADER ──────────────────────────────────── */}
+      <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <Users className="h-6 w-6 text-primary" />
-            Team Jarvis
+          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
+            <div className="h-9 w-9 rounded-xl bg-primary/15 flex items-center justify-center">
+              <Radio className="h-5 w-5 text-primary" />
+            </div>
+            Mission Control HQ
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Autonomous development squad — 24/7 coordinated agent team
+          <p className="text-sm text-muted-foreground mt-1.5">
+            10-agent autonomous squad · {busyAgents.length} working ·{" "}
+            {inProgress.length} in progress · {blocked.length > 0 && (
+              <span className="text-amber-400 font-medium">{blocked.length} blocked · </span>
+            )}{done.length} done
           </p>
         </div>
-        <Button size="sm" onClick={() => setAssignOpen(true)}>
-          <Plus className="h-4 w-4 mr-2" />
-          New Mission
-        </Button>
-      </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Execution mode toggle */}
+          <div className="flex items-center gap-1 rounded-lg border border-border/50 bg-card/40 p-1">
+            <button
+              onClick={() => setExecutionMode("simulation")}
+              className={cn(
+                "h-7 px-3 rounded-md text-xs font-medium flex items-center gap-1.5 transition-colors",
+                executionMode === "simulation"
+                  ? "bg-primary/15 text-primary"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              Simulation
+            </button>
+            <button
+              onClick={() => setExecutionMode("real")}
+              disabled={!gatewayConnected}
+              className={cn(
+                "h-7 px-3 rounded-md text-xs font-medium flex items-center gap-1.5 transition-colors",
+                executionMode === "real"
+                  ? "bg-emerald-500/15 text-emerald-400"
+                  : "text-muted-foreground hover:text-foreground",
+                !gatewayConnected && "opacity-40 cursor-not-allowed"
+              )}
+              title={!gatewayConnected ? "Gateway disconnected" : "Use real Claude sessions (costs tokens)"}
+            >
+              <Zap className="h-3 w-3" />
+              Real
+            </button>
+          </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card className="border-border/50 bg-card/50">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-muted-foreground">Team Online</p>
-                <p className="text-2xl font-bold mt-1">
-                  {stats.onlineAgents}
-                  <span className="text-sm font-normal text-muted-foreground">/{stats.totalAgents}</span>
-                </p>
-              </div>
-              <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center">
-                <Users className="h-5 w-5 text-primary" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border-border/50 bg-card/50">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-muted-foreground">Active Missions</p>
-                <p className="text-2xl font-bold mt-1">{stats.active}</p>
-              </div>
-              <div className="h-10 w-10 rounded-xl bg-amber-500/10 flex items-center justify-center">
-                <Rocket className="h-5 w-5 text-amber-500" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border-border/50 bg-card/50">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-muted-foreground">Completed</p>
-                <p className="text-2xl font-bold mt-1">{stats.completed}</p>
-              </div>
-              <div className="h-10 w-10 rounded-xl bg-emerald-500/10 flex items-center justify-center">
-                <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="border-border/50 bg-card/50">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-muted-foreground">Bug Loops</p>
-                <p className="text-2xl font-bold mt-1">{stats.totalBugLoops}</p>
-              </div>
-              <div className="h-10 w-10 rounded-xl bg-red-500/10 flex items-center justify-center">
-                <Bug className="h-5 w-5 text-red-500" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Agent Team Grid */}
-      <div>
-        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-          The Squad
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {agents.map((agent) => (
-            <AgentCard key={agent.id} agent={agent} missions={missions} />
-          ))}
+          <Button
+            size="sm"
+            variant={autonomyEnabled ? "default" : "outline"}
+            onClick={() => setAutonomyEnabled(!autonomyEnabled)}
+            className={autonomyEnabled ? "bg-emerald-600 hover:bg-emerald-700" : ""}
+          >
+            {autonomyEnabled ? (
+              <><Pause className="h-4 w-4 mr-2" />Autonomy ON</>
+            ) : (
+              <><Play className="h-4 w-4 mr-2" />Start Autonomy</>
+            )}
+          </Button>
+          {tasks.length > 0 && (
+            <Button size="sm" variant="outline" onClick={clearAll} className="text-muted-foreground">
+              <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+              Clear
+            </Button>
+          )}
+          <Button size="sm" onClick={() => setAssignOpen(true)}>
+            <Plus className="h-4 w-4 mr-2" />
+            New Mission
+          </Button>
         </div>
       </div>
 
-      {/* Pipeline Visualization */}
-      <Card className="border-border/50 bg-card/50">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base font-semibold">Pipeline Flow</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center gap-1 overflow-x-auto pb-2">
-            {PIPELINE_STAGES.filter((s) => s.id !== "completed" && s.id !== "failed").map((stage, idx) => {
-              const stageAgent = agents.find((a) => a.id === stage.agentId);
-              const missionsAtStage = activeMissions.filter((m) => m.currentStage === stage.id);
-              return (
-                <div key={stage.id} className="flex items-center">
-                  <div
-                    className={cn(
-                      "flex flex-col items-center gap-1.5 px-3 py-3 rounded-xl border min-w-[110px] transition-all",
-                      missionsAtStage.length > 0
-                        ? "border-primary/30 bg-primary/5 shadow-sm shadow-primary/10"
-                        : "border-border/30 bg-muted/20"
-                    )}
-                  >
-                    <div className={cn(
-                      "h-8 w-8 rounded-lg flex items-center justify-center text-xs font-bold",
-                      stageAgent?.color || "bg-muted",
-                      "text-white"
-                    )}>
-                      {stageAgent?.avatar || "?"}
-                    </div>
-                    <span className="text-[11px] font-medium text-center">{stage.label}</span>
-                    <span className="text-[10px] text-muted-foreground">{stageAgent?.name}</span>
-                    {missionsAtStage.length > 0 && (
-                      <Badge className="text-[9px] bg-primary/20 text-primary border-0 px-1.5">
-                        {missionsAtStage.length} active
-                      </Badge>
-                    )}
-                  </div>
-                  {idx < PIPELINE_STAGES.filter((s) => s.id !== "completed" && s.id !== "failed").length - 1 && (
-                    <ChevronRight className="h-4 w-4 text-muted-foreground/30 shrink-0 mx-0.5" />
-                  )}
+      {/* Status banners */}
+      {autonomyEnabled && executionMode === "real" && gatewayConnected && (
+        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 flex items-center gap-3">
+          <Zap className="h-4 w-4 text-emerald-400" />
+          <p className="text-sm flex-1">
+            <span className="font-semibold text-emerald-400">Real execution active.</span>{" "}
+            <span className="text-muted-foreground">Agents spawn live OpenClaw sessions when they claim tasks. Token costs apply — monitor usage.</span>
+          </p>
+          <div className="flex items-center gap-1.5 text-xs text-emerald-400">
+            <Wifi className="h-3.5 w-3.5" />
+            <span>gateway connected</span>
+          </div>
+        </div>
+      )}
+      {autonomyEnabled && executionMode === "simulation" && (
+        <div className="rounded-xl border border-blue-500/25 bg-blue-500/5 px-4 py-3 flex items-center gap-3">
+          <div className="h-2.5 w-2.5 rounded-full bg-blue-500 animate-pulse" />
+          <p className="text-sm">
+            <span className="font-semibold text-blue-400">Simulation running.</span>{" "}
+            <span className="text-muted-foreground">Agents move tasks through stages with templated comments — no real Claude calls. Switch to Real mode for live execution.</span>
+          </p>
+        </div>
+      )}
+      {executionMode === "real" && !gatewayConnected && (
+        <div className="rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3 flex items-center gap-3">
+          <WifiOff className="h-4 w-4 text-red-400" />
+          <p className="text-sm">
+            <span className="font-semibold text-red-400">Gateway disconnected.</span>{" "}
+            <span className="text-muted-foreground">Real execution needs the OpenClaw gateway at ws://127.0.0.1:18789. Check your OpenClaw service and reload.</span>
+          </p>
+        </div>
+      )}
+
+      {/* ── STATS ──────────────────────────────────── */}
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+        {[
+          { label: "Squad",        value: `${agents.filter(a => a.status !== "offline").length}/${agents.length}`, icon: Users,      color: "text-primary bg-primary/10" },
+          { label: "Backlog",      value: backlog.length,    icon: Rocket,     color: "text-zinc-400 bg-zinc-500/10" },
+          { label: "In Progress",  value: inProgress.length, icon: Play,       color: "text-amber-400 bg-amber-500/10" },
+          { label: "In Review",    value: inReview.length,   icon: CheckCheck, color: "text-violet-400 bg-violet-500/10" },
+          { label: "Blocked",      value: blocked.length,    icon: HelpCircle, color: "text-yellow-400 bg-yellow-500/10" },
+          { label: "Done",         value: done.length,       icon: CheckCheck, color: "text-emerald-400 bg-emerald-500/10" },
+        ].map((s) => (
+          <Card key={s.label} className="border-border/50 bg-card/60">
+            <CardContent className="pt-5 pb-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs text-muted-foreground">{s.label}</p>
+                  <p className="text-2xl font-bold mt-0.5">{s.value}</p>
                 </div>
-              );
-            })}
-          </div>
-          {/* Bug loop indicator */}
-          <div className="flex items-center gap-2 mt-3 px-2">
-            <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-              <Bug className="h-3 w-3 text-red-400" />
-              <span>Bug loop: Testing → Development (auto-reroute on failure)</span>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Missions Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Mission List */}
-        <div className="lg:col-span-2">
-          <Tabs value={missionTab} onValueChange={setMissionTab}>
-            <div className="flex items-center justify-between mb-3">
-              <TabsList>
-                <TabsTrigger value="active" className="text-xs">
-                  Active ({activeMissions.length})
-                </TabsTrigger>
-                <TabsTrigger value="queued" className="text-xs">
-                  Queued ({queuedMissions.length})
-                </TabsTrigger>
-                <TabsTrigger value="completed" className="text-xs">
-                  Done ({completedMissions.length})
-                </TabsTrigger>
-              </TabsList>
-            </div>
-
-            <TabsContent value="active" className="space-y-3 mt-0">
-              {activeMissions.length === 0 ? (
-                <EmptyState message="No active missions" />
-              ) : (
-                activeMissions.map((m) => (
-                  <MissionCard
-                    key={m.id}
-                    mission={m}
-                    agents={agents}
-                    progress={getMissionProgress(m)}
-                    selected={selectedMission?.id === m.id}
-                    onSelect={() => selectMission(selectedMission?.id === m.id ? null : m)}
-                  />
-                ))
-              )}
-            </TabsContent>
-
-            <TabsContent value="queued" className="space-y-3 mt-0">
-              {queuedMissions.length === 0 ? (
-                <EmptyState message="No queued missions" />
-              ) : (
-                queuedMissions.map((m) => (
-                  <MissionCard
-                    key={m.id}
-                    mission={m}
-                    agents={agents}
-                    progress={getMissionProgress(m)}
-                    selected={selectedMission?.id === m.id}
-                    onSelect={() => selectMission(selectedMission?.id === m.id ? null : m)}
-                  />
-                ))
-              )}
-            </TabsContent>
-
-            <TabsContent value="completed" className="space-y-3 mt-0">
-              {completedMissions.length === 0 ? (
-                <EmptyState message="No completed missions yet" />
-              ) : (
-                completedMissions.map((m) => (
-                  <MissionCard
-                    key={m.id}
-                    mission={m}
-                    agents={agents}
-                    progress={getMissionProgress(m)}
-                    selected={selectedMission?.id === m.id}
-                    onSelect={() => selectMission(selectedMission?.id === m.id ? null : m)}
-                  />
-                ))
-              )}
-            </TabsContent>
-          </Tabs>
-        </div>
-
-        {/* Mission Detail / Comms Log */}
-        <div>
-          <Card className="border-border/50 bg-card/50 sticky top-20">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base font-semibold">
-                {selectedMission ? "Mission Detail" : "Agent Comms"}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {selectedMission ? (
-                <MissionDetail mission={selectedMission} agents={agents} />
-              ) : (
-                <RecentComms missions={missions} agents={agents} />
-              )}
+                <div className={cn("h-10 w-10 rounded-xl flex items-center justify-center", s.color)}>
+                  <s.icon className="h-4 w-4" />
+                </div>
+              </div>
             </CardContent>
           </Card>
+        ))}
+      </div>
+
+      {/* ── MAIN GRID: squad + activity feed ──────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+        {/* Squad grid */}
+        <div className="lg:col-span-2">
+          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-widest mb-3 flex items-center gap-2">
+            <Users className="h-3.5 w-3.5" />
+            The Squad
+          </h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {agents.map((agent) => (
+              <AgentCard
+                key={agent.id}
+                agent={agent}
+                currentTask={tasks.find((t) => t.id === agent.currentTaskId) ?? null}
+                onClick={(task) => task && openTask(task)}
+              />
+            ))}
+          </div>
+
+          {/* Mini mission board preview */}
+          <div className="mt-6">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-widest flex items-center gap-2">
+                <Rocket className="h-3.5 w-3.5" />
+                Mission Board
+              </h2>
+              <a href="/kanban" className="text-xs text-primary hover:text-primary/80">Open full board →</a>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <MiniColumn title="Backlog" count={backlog.length} tasks={backlog.slice(0, 3)} onTaskClick={openTask} />
+              <MiniColumn title="Active" count={inProgress.length} tasks={inProgress.slice(0, 3)} onTaskClick={openTask} />
+              <MiniColumn title="Review" count={inReview.length} tasks={inReview.slice(0, 3)} onTaskClick={openTask} />
+            </div>
+          </div>
+        </div>
+
+        {/* Activity feed */}
+        <div>
+          <div className="sticky top-20">
+            <ActivityFeed activity={activity} onTaskClick={(id) => {
+              const t = tasks.find((x) => x.id === id);
+              if (t) openTask(t);
+            }} />
+          </div>
         </div>
       </div>
 
       <AssignMissionDialog open={assignOpen} onOpenChange={setAssignOpen} />
+      <TaskDetailSheet task={selectedTask} open={detailOpen} onOpenChange={setDetailOpen} />
     </div>
   );
 }
 
 // ============================================================
-// SUB-COMPONENTS
+// AGENT CARD
 // ============================================================
 
-function AgentCard({ agent, missions }: { agent: TeamAgent; missions: Mission[] }) {
-  const agentMissions = missions.filter(
-    (m) => m.currentAgentId === agent.id && m.status === "active"
-  );
-  const statusColors: Record<string, string> = {
-    online: "bg-emerald-500",
-    busy: "bg-amber-500",
-    idle: "bg-blue-400",
+function AgentCard({
+  agent, currentTask, onClick,
+}: {
+  agent: SquadAgent;
+  currentTask: Task | null;
+  onClick: (task: Task | null) => void;
+}) {
+  const statusDot: Record<string, string> = {
+    online:  "bg-emerald-500",
+    busy:    "bg-amber-500 animate-pulse",
+    idle:    "bg-blue-400",
     offline: "bg-zinc-500",
   };
 
   return (
-    <Card className="border-border/50 bg-card/50 hover:shadow-lg transition-all">
-      <CardContent className="pt-5 space-y-3">
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-3">
-            <div className={cn(
-              "h-11 w-11 rounded-xl flex items-center justify-center text-sm font-bold text-white",
-              agent.color
-            )}>
+    <Card className={cn(
+      "border-border/50 bg-card/60 hover:shadow-lg transition-all",
+      agent.status === "busy" && "border-amber-500/20 bg-amber-500/5",
+      currentTask && "cursor-pointer"
+    )}
+    onClick={() => currentTask && onClick(currentTask)}
+    >
+      <CardContent className="pt-4 pb-4">
+        <div className="flex items-start gap-3">
+          <div className="relative shrink-0">
+            <div className={cn("h-12 w-12 rounded-xl flex items-center justify-center text-base font-bold text-white", agent.color)}>
               {agent.avatar}
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="font-semibold text-sm">{agent.name}</h3>
-                {agent.role === "lead" && (
-                  <Crown className="h-3 w-3 text-amber-400" />
-                )}
-              </div>
-              <p className="text-[11px] text-muted-foreground">{agent.title}</p>
-            </div>
+            <span className={cn("absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-background", statusDot[agent.status])} />
           </div>
-          <div className="flex items-center gap-1.5">
-            <div className={cn("h-2 w-2 rounded-full", statusColors[agent.status])} />
-            <span className="text-[10px] text-muted-foreground capitalize">{agent.status}</span>
-          </div>
-        </div>
-
-        <p className="text-[11px] text-muted-foreground/80 leading-relaxed line-clamp-2">
-          {agent.description}
-        </p>
-
-        <div className="flex flex-wrap gap-1">
-          {agent.capabilities.slice(0, 3).map((cap) => (
-            <Badge key={cap} variant="secondary" className="text-[9px] px-1.5 py-0">
-              {cap}
-            </Badge>
-          ))}
-          {agent.capabilities.length > 3 && (
-            <Badge variant="secondary" className="text-[9px] px-1.5 py-0">
-              +{agent.capabilities.length - 3}
-            </Badge>
-          )}
-        </div>
-
-        <div className="flex items-center justify-between pt-2 border-t border-border/30">
-          <div className="flex items-center gap-3">
-            <div className="text-center">
-              <p className="text-sm font-bold">{agent.tasksHandled}</p>
-              <p className="text-[9px] text-muted-foreground">Handled</p>
-            </div>
-            {agent.bugsFound !== undefined && (
-              <div className="text-center">
-                <p className="text-sm font-bold">{agent.bugsFound}</p>
-                <p className="text-[9px] text-muted-foreground">Bugs found</p>
-              </div>
-            )}
-            {agent.bugsFixed !== undefined && (
-              <div className="text-center">
-                <p className="text-sm font-bold">{agent.bugsFixed}</p>
-                <p className="text-[9px] text-muted-foreground">Fixes</p>
-              </div>
-            )}
-            {agent.approvals !== undefined && (
-              <div className="text-center">
-                <p className="text-sm font-bold">{agent.approvals}</p>
-                <p className="text-[9px] text-muted-foreground">Approved</p>
-              </div>
-            )}
-          </div>
-          {agentMissions.length > 0 && (
-            <Badge className="text-[9px] bg-primary/20 text-primary border-0">
-              {agentMissions.length} mission{agentMissions.length > 1 ? "s" : ""}
-            </Badge>
-          )}
-        </div>
-
-        <Badge variant="secondary" className="text-[9px] gap-1">
-          <RoleIcon role={agent.role} className="h-2.5 w-2.5" />
-          {agent.model}
-        </Badge>
-      </CardContent>
-    </Card>
-  );
-}
-
-function MissionCard({
-  mission,
-  agents,
-  progress,
-  selected,
-  onSelect,
-}: {
-  mission: Mission;
-  agents: TeamAgent[];
-  progress: number;
-  selected: boolean;
-  onSelect: () => void;
-}) {
-  const currentAgent = agents.find((a) => a.id === mission.currentAgentId);
-  const stageConfig = PIPELINE_STAGES.find((s) => s.id === mission.currentStage);
-
-  return (
-    <Card
-      className={cn(
-        "border-border/50 bg-card/50 hover:shadow-lg transition-all cursor-pointer",
-        selected && "border-primary/40 ring-1 ring-primary/20"
-      )}
-      onClick={onSelect}
-    >
-      <CardContent className="pt-5 space-y-3">
-        <div className="flex items-start justify-between">
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1">
-              <h3 className="font-semibold text-sm truncate">{mission.title}</h3>
-              <PriorityBadge priority={mission.priority} />
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-sm">{agent.name}</span>
+              {agent.specialty === "orchestration" && <Crown className="h-3 w-3 text-amber-400" />}
             </div>
-            <p className="text-[11px] text-muted-foreground truncate">{mission.description}</p>
-          </div>
-        </div>
+            <p className="text-xs text-muted-foreground truncate">{agent.title}</p>
+            <p className="text-[11px] text-muted-foreground/60 truncate mt-0.5">{agent.codename}</p>
 
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5">
-            {currentAgent && (
-              <div className={cn(
-                "h-5 w-5 rounded text-[9px] font-bold flex items-center justify-center text-white",
-                currentAgent.color
-              )}>
-                {currentAgent.avatar}
+            {currentTask ? (
+              <div className="mt-2 p-2 rounded-md bg-background/60 border border-border/30">
+                <p className="text-xs font-medium truncate">{currentTask.title}</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5 capitalize">
+                  {currentTask.status.replace("_", " ")}
+                </p>
               </div>
+            ) : (
+              <p className="text-xs text-muted-foreground mt-1.5">{agent.description.slice(0, 80)}…</p>
             )}
-            <span className="text-[11px] text-muted-foreground">
-              {currentAgent?.name} — {stageConfig?.label}
-            </span>
-          </div>
-          {mission.bugLoopCount > 0 && (
-            <div className="flex items-center gap-1">
-              <Bug className="h-3 w-3 text-red-400" />
-              <span className="text-[10px] text-red-400">{mission.bugLoopCount}x</span>
+
+            <div className="flex items-center gap-3 mt-2 text-[11px] text-muted-foreground">
+              <span>{agent.stats.tasksCompleted} done</span>
+              <span>·</span>
+              <span>{agent.stats.commentsPosted} comments</span>
+              {agent.stats.reviewsGiven > 0 && (<><span>·</span><span>{agent.stats.reviewsGiven} reviews</span></>)}
             </div>
-          )}
-        </div>
-
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-            <span>Pipeline progress</span>
-            <span>{progress}%</span>
           </div>
-          <Progress value={progress} className="h-1.5" />
-        </div>
-
-        {/* Mini pipeline dots */}
-        <div className="flex items-center gap-1 pt-1">
-          {PIPELINE_STAGES.filter((s) => s.id !== "failed").map((stage) => (
-            <StageStatusIcon key={stage.id} stage={stage.id} currentStage={mission.currentStage} />
-          ))}
-        </div>
-
-        <div className="flex items-center gap-2 flex-wrap pt-1">
-          {mission.tags.map((tag) => (
-            <Badge key={tag} variant="outline" className="text-[9px] px-1.5 py-0 text-muted-foreground border-border/50">
-              {tag}
-            </Badge>
-          ))}
         </div>
       </CardContent>
     </Card>
   );
 }
 
-function MissionDetail({ mission, agents }: { mission: Mission; agents: TeamAgent[] }) {
+// ============================================================
+// MINI COLUMN (mission board preview)
+// ============================================================
+
+function MiniColumn({
+  title, count, tasks, onTaskClick,
+}: {
+  title: string;
+  count: number;
+  tasks: Task[];
+  onTaskClick: (t: Task) => void;
+}) {
   return (
-    <div className="space-y-4">
-      <div>
-        <h4 className="font-semibold text-sm">{mission.title}</h4>
-        <p className="text-[11px] text-muted-foreground mt-1">{mission.description}</p>
-      </div>
-
-      {/* Stage timeline */}
-      <div className="space-y-1">
-        <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-          Stage History
-        </p>
-        <div className="space-y-2">
-          {mission.stageHistory.map((entry, idx) => {
-            const agent = agents.find((a) => a.id === entry.agentId);
-            const stageConfig = PIPELINE_STAGES.find((s) => s.id === entry.stage);
-            return (
-              <div key={idx} className="flex items-start gap-2">
-                <div className={cn(
-                  "h-5 w-5 rounded text-[8px] font-bold flex items-center justify-center text-white shrink-0 mt-0.5",
-                  agent?.color || "bg-muted"
-                )}>
-                  {agent?.avatar || "?"}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-[11px] font-medium">{stageConfig?.label}</p>
-                  <p className="text-[10px] text-muted-foreground">
-                    {new Date(entry.enteredAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                    {entry.exitedAt && (
-                      <> → {new Date(entry.exitedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</>
-                    )}
-                    {!entry.exitedAt && (
-                      <span className="text-amber-400 ml-1">in progress</span>
-                    )}
-                  </p>
-                </div>
+    <Card className="border-border/50 bg-card/60">
+      <CardHeader className="pb-2 pt-3 px-3">
+        <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
+          {title}
+          <Badge variant="secondary" className="text-xs">{count}</Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="px-3 pb-3 space-y-2">
+        {tasks.length === 0 ? (
+          <p className="text-xs text-muted-foreground/60 py-2 text-center">empty</p>
+        ) : (
+          tasks.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => onTaskClick(t)}
+              className="w-full text-left p-2 rounded-md bg-muted/30 hover:bg-muted/60 transition-colors border border-border/20"
+            >
+              <div className="flex items-start gap-1.5">
+                {t.priority === "critical" && <Flame className="h-3 w-3 text-red-400 shrink-0 mt-0.5" />}
+                {t.priority === "high" && <AlertTriangle className="h-3 w-3 text-amber-400 shrink-0 mt-0.5" />}
+                <p className="text-xs line-clamp-2 flex-1">{t.title}</p>
               </div>
-            );
-          })}
-        </div>
-      </div>
+              {t.assigneeId && (
+                <div className="flex items-center gap-1.5 mt-1.5">
+                  <AgentAvatar agentId={t.assigneeId} size="sm" />
+                  <span className="text-[11px] text-muted-foreground truncate">{getAgent(t.assigneeId)?.name}</span>
+                </div>
+              )}
+            </button>
+          ))
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
-      {/* Comms log */}
-      <div className="space-y-1">
-        <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-          Communications
-        </p>
-        <ScrollArea className="h-[280px]">
-          <div className="space-y-2 pr-3">
-            {mission.logs.map((log) => {
-              const agent = agents.find((a) => a.id === log.agentId);
-              return (
-                <div key={log.id} className="flex items-start gap-2">
-                  <LogIcon type={log.type} />
+// ============================================================
+// ACTIVITY FEED
+// ============================================================
+
+function ActivityFeed({
+  activity, onTaskClick,
+}: {
+  activity: ActivityEvent[];
+  onTaskClick: (taskId: string) => void;
+}) {
+  return (
+    <Card className="border-border/50 bg-card/60">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base font-semibold flex items-center gap-2">
+          <Activity className="h-4 w-4 text-primary" />
+          Live Activity
+          <span className="ml-auto h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <ScrollArea className="h-[600px]">
+          {activity.length === 0 ? (
+            <div className="py-12 text-center">
+              <Activity className="h-10 w-10 mx-auto text-muted-foreground/15 mb-3" />
+              <p className="text-sm text-muted-foreground">No activity yet</p>
+              <p className="text-xs text-muted-foreground/60 mt-1">Create a mission to start the squad</p>
+            </div>
+          ) : (
+            <div className="space-y-2.5 pr-3">
+              {activity.slice(0, 100).map((ev) => (
+                <button
+                  key={ev.id}
+                  onClick={() => onTaskClick(ev.taskId)}
+                  className="w-full flex items-start gap-2.5 p-2.5 rounded-lg hover:bg-muted/40 transition-colors text-left"
+                >
+                  <AgentAvatar agentId={ev.actorId} size="sm" />
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[10px] font-semibold">{agent?.name}</span>
-                      <span className="text-[9px] text-muted-foreground">
-                        {new Date(log.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                      </span>
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <ActivityIcon type={ev.type} />
+                      <span className="text-[11px] text-muted-foreground ml-auto shrink-0">{elapsed(ev.timestamp)}</span>
                     </div>
-                    <p className="text-[11px] text-muted-foreground/90 leading-relaxed">
-                      {log.message}
-                    </p>
+                    <p className="text-xs text-foreground/90 leading-relaxed">{ev.message}</p>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                </button>
+              ))}
+            </div>
+          )}
         </ScrollArea>
-      </div>
-    </div>
-  );
-}
-
-function RecentComms({ missions, agents }: { missions: Mission[]; agents: TeamAgent[] }) {
-  const allLogs = missions
-    .flatMap((m) =>
-      m.logs.map((log) => ({ ...log, missionTitle: m.title, missionId: m.id }))
-    )
-    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-    .slice(0, 20);
-
-  return (
-    <div className="space-y-1">
-      <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-2">
-        Latest Inter-Agent Communications
-      </p>
-      <ScrollArea className="h-[400px]">
-        <div className="space-y-3 pr-3">
-          {allLogs.map((log) => {
-            const agent = agents.find((a) => a.id === log.agentId);
-            return (
-              <div key={`${log.missionId}-${log.id}`} className="flex items-start gap-2">
-                <div className={cn(
-                  "h-5 w-5 rounded text-[8px] font-bold flex items-center justify-center text-white shrink-0 mt-0.5",
-                  agent?.color || "bg-muted"
-                )}>
-                  {agent?.avatar || "?"}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] font-semibold">{agent?.name}</span>
-                    <LogIcon type={log.type} />
-                    <span className="text-[9px] text-muted-foreground">
-                      {new Date(log.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                    </span>
-                  </div>
-                  <p className="text-[10px] text-muted-foreground/60 truncate">{log.missionTitle}</p>
-                  <p className="text-[11px] text-muted-foreground/90 leading-relaxed">
-                    {log.message}
-                  </p>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </ScrollArea>
-    </div>
-  );
-}
-
-function EmptyState({ message }: { message: string }) {
-  return (
-    <Card className="border-border/50 bg-card/50">
-      <CardContent className="py-8 text-center">
-        <Rocket className="h-8 w-8 mx-auto text-muted-foreground/20 mb-2" />
-        <p className="text-sm text-muted-foreground">{message}</p>
       </CardContent>
     </Card>
   );

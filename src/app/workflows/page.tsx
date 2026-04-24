@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useOpenClaw } from "@/lib/openclaw-context";
 import { ConnectionStatus } from "@/components/connection-status";
 import { CreateCronDialog } from "@/components/create-cron-dialog";
+import { LoadingSpinner } from "@/components/loading-spinner";
 import {
   Clock,
   Loader2,
@@ -26,13 +27,7 @@ export default function WorkflowsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-full min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
+  if (loading) return <LoadingSpinner />;
 
   const enabledJobs = cronJobs.filter((j) => j.enabled);
   const disabledJobs = cronJobs.filter((j) => !j.enabled);

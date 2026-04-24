@@ -4,18 +4,13 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useOpenClaw } from "@/lib/openclaw-context";
 import { ConnectionStatus } from "@/components/connection-status";
-import { Loader2, FolderOpen, Bot, Cpu, Server } from "lucide-react";
+import { FolderOpen, Bot, Cpu, Server } from "lucide-react";
+import { LoadingSpinner } from "@/components/loading-spinner";
 
 export default function ProjectsPage() {
   const { loading, agents, sessions, models, tools, config } = useOpenClaw();
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-full min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
+  if (loading) return <LoadingSpinner />;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const cfg = (config || {}) as any;

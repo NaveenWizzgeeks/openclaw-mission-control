@@ -8,7 +8,8 @@ import { useOpenClaw } from "@/lib/openclaw-context";
 import { useChatContext } from "@/lib/chat-context";
 import { ConnectionStatus } from "@/components/connection-status";
 import { SpawnTaskDialog } from "@/components/spawn-task-dialog";
-import { Bot, Cpu, Loader2, MessageSquare, Rocket, Send } from "lucide-react";
+import { Bot, Cpu, MessageSquare, Rocket, Send } from "lucide-react";
+import { LoadingSpinner } from "@/components/loading-spinner";
 
 export default function AgentsPage() {
   const { loading, agents, sessions } = useOpenClaw();
@@ -16,13 +17,7 @@ export default function AgentsPage() {
   const [spawnOpen, setSpawnOpen] = useState(false);
   const [spawnAgent, setSpawnAgent] = useState<string | undefined>();
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-full min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
+  if (loading) return <LoadingSpinner />;
 
   function getAgentSessions(agentId: string) {
     return sessions.filter(
