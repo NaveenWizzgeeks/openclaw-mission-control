@@ -12,10 +12,11 @@ A professional-grade control plane for an autonomous 10-agent OpenClaw squad. Th
 4. [The HQ agent (Jarvis) and auto-pickup](#the-hq-agent-jarvis-and-auto-pickup)
 5. [Session spawn flow](#session-spawn-flow)
 6. [Gateway methods the UI calls](#gateway-methods-the-ui-calls)
-7. [Modes and toggles](#modes-and-toggles)
-8. [Troubleshooting](#troubleshooting)
-9. [Memory + backups](#memory--backups)
-10. [How to update this README](#how-to-update-this-readme)
+7. [Telegram integration](#telegram-integration)
+8. [Modes and toggles](#modes-and-toggles)
+9. [Troubleshooting](#troubleshooting)
+10. [Memory + backups](#memory--backups)
+11. [How to update this README](#how-to-update-this-readme)
 
 ---
 
@@ -41,9 +42,12 @@ A professional-grade control plane for an autonomous 10-agent OpenClaw squad. Th
 |---|---|
 | `src/lib/openclaw-client.ts` | Thin client: POST to `/api/openclaw` with `{method, params}`. |
 | `src/lib/openclaw-context.tsx` | Exposes `spawnTask`, `sendChat`, `fetchAgents`, cron CRUD, etc. |
-| `src/lib/team-context.tsx` | 10-agent squad, task state, `heartbeatTick`, `spawnRealSession`, session poller. |
+| `src/lib/team-context.tsx` | 10-agent squad, task state, `heartbeatTick`, `spawnRealSession`, session poller, Telegram inbound poller. |
 | `src/lib/team-store.ts` | Squad roster (`jarvis`, `stark`, `cap`, etc.) and task shape. |
+| `src/lib/telegram-client.ts` | Client helpers: `sendToTelegram`, `pollTelegram`, `parseAgentMentions`. |
 | `src/app/api/openclaw/route.ts` | WS gateway proxy. |
+| `src/app/api/telegram/send/route.ts` | Outbound: POSTs messages to Telegram via Bot API. |
+| `src/app/api/telegram/poll/route.ts` | Inbound: long-polls Telegram `getUpdates` and returns new messages. |
 | `src/components/spawn-task-dialog.tsx` | UI to spawn a one-shot task. |
 | `src/components/assign-mission-dialog.tsx` | UI to add a task to the backlog. |
 
@@ -152,6 +156,53 @@ All proxied through `/api/openclaw`:
 
 ---
 
+## Telegram integration
+
+Mission Control mirrors squad activity to a Telegram chat or group and accepts new missions posted in Telegram.
+
+### Outbound events (Mission Control → Telegram)
+
+| Event | Message |
+|---|---|
+| New mission created (not from Telegram) | 🆕 New mission by *actor*: _title_ |
+| Task claimed | 🎯 *agent* claimed mission: _title_ |
+| Task started | ⚡ *agent* started: _title_ |
+| Review requested | 👀 *doer* → review by *reviewer*: _title_ |
+| Approved | ✅ Mission complete: _title_ |
+| Blocked with question | 🙋 *agent* needs input on _title_: question |
+| Agent comment/chatter | 💬 *agent* on _title_: preview |
+| Telegram ack (task received) | 📥 Received. Mission queued / *agent* will handle |
+
+Echo guard: tasks created by the inbound poller are tagged `from-telegram`, and the outbound announcer skips them to avoid loops.
+
+### Inbound polling (Telegram → Mission Control)
+
+Every 4 seconds, the UI calls `/api/telegram/poll` which in turn hits `https://api.telegram.org/bot<token>/getUpdates` with a cached offset. New messages turn into tasks:
+
+- `@jarvis do X` → creates a task tagged `@jarvis` + `from-telegram`, and if Jarvis is not offline, claimTask fires immediately.
+- `do X` (no mention) → creates a medium-priority task with the stripped text as title; heartbeat auto-pickup claims it like any other backlog item.
+- The sender's Telegram name is recorded in the task description.
+
+### Configuration
+
+Set these in `mission-control/.env.local` (gitignored):
+
+```
+TELEGRAM_BOT_TOKEN=<from @BotFather>
+TELEGRAM_CHAT_ID=<your DM chat id from @userinfobot>
+TELEGRAM_GROUP_CHAT_ID=<optional: negative id, for a group chat>
+```
+
+Resolution order for outbound: `TELEGRAM_GROUP_CHAT_ID` → `TELEGRAM_CHAT_ID`. For group chat, add the bot to the group and disable privacy mode via @BotFather so it can read all messages.
+
+### Gotchas
+
+- Without a bot token, `sendToTelegram` fails silently and disables itself for the session (logged to console).
+- The inbound poller advances the Telegram `update_id` offset server-side in `/api/telegram/poll`, so each update is processed once per server lifetime. Restarting the Next dev server resets the offset and may re-deliver recent messages.
+- Messages from usernames ending in `bot` are ignored to prevent feedback loops.
+
+---
+
 ## Modes and toggles
 
 Two independent switches, both persisted to localStorage:
@@ -219,3 +270,4 @@ Mission Control relies on OpenClaw's memory system, which now has automated snap
 4. Did you change `/api/openclaw/route.ts` (transport)? → update *Architecture*.
 5. Did you change mode/toggle defaults? → update *Modes and toggles*.
 6. Did you add new dialogs or UI pages? → add to *Key files* and any relevant flow.
+7. Did you change Telegram send/poll/wire-up? → update *Telegram integration* (event table, inbound rules, env vars).

@@ -26,6 +26,7 @@ import {
 } from "./team-store";
 import { useLocalStorage } from "./use-local-storage";
 import { useOpenClaw } from "./openclaw-context";
+import { sendToTelegram, pollTelegram, parseAgentMentions, stripMentions } from "./telegram-client";
 
 // ============================================================
 // Types
@@ -263,12 +264,21 @@ export function TeamProvider({ children }: { children: ReactNode }) {
 
       if (actor !== "user") bumpStat(actor, "tasksCreated");
 
+      const actorName = actor === "user" ? "You" : getAgent(actor)?.name ?? actor;
       pushActivity({
         type: "task_created",
         actorId: actor,
         taskId: task.id,
-        message: `${actor === "user" ? "You" : getAgent(actor)?.name ?? actor} created task "${title}"`,
+        message: `${actorName} created task "${title}"`,
       });
+      // Only announce to Telegram if the creator is NOT from Telegram (avoid echo loops).
+      // Tasks coming from Telegram inbound polling are marked with tag "from-telegram".
+      if (!tags.includes("from-telegram")) {
+        sendToTelegram(
+          `🆕 New mission by *${actorName}*: _${title}_\n` +
+            `Priority: ${priority}${sp ? ` · ${sp}` : ""}`
+        );
+      }
 
       return task;
     },
@@ -310,6 +320,13 @@ export function TeamProvider({ children }: { children: ReactNode }) {
           message: `${authorName} @mentioned ${getAgent(m)?.name} on "${task?.title ?? "task"}"`,
         });
       });
+
+      // Mirror agent chatter to Telegram (skip auto-plumbing, user echoes, and empty updates)
+      const isAuto = text.startsWith("Session spawned") || text.startsWith("Failed to spawn");
+      if (authorId !== "user" && !isAuto && type !== "approval") {
+        const preview = text.length > 240 ? text.slice(0, 240) + "…" : text;
+        sendToTelegram(`💬 *${authorName}* on _${task?.title ?? "task"}_:\n${preview}`);
+      }
     },
     [setTasks, bumpStat, pushActivity]
   );
@@ -327,12 +344,14 @@ export function TeamProvider({ children }: { children: ReactNode }) {
       );
       setAgentStatus(agentId, "busy", taskId);
       const task = tasksRef.current.find((t) => t.id === taskId);
+      const agentName = getAgent(agentId)?.name ?? agentId;
       pushActivity({
         type: "task_claimed",
         actorId: agentId,
         taskId,
-        message: `${getAgent(agentId)?.name} claimed "${task?.title ?? "task"}"`,
+        message: `${agentName} claimed "${task?.title ?? "task"}"`,
       });
+      sendToTelegram(`🎯 *${agentName}* claimed mission: _${task?.title ?? "task"}_`);
     },
     [setTasks, setAgentStatus, pushActivity]
   );
@@ -347,12 +366,14 @@ export function TeamProvider({ children }: { children: ReactNode }) {
           t.id === taskId ? { ...t, status: "in_progress" as const, startedAt: now, updatedAt: now } : t
         )
       );
+      const agentName = getAgent(task.assigneeId)?.name ?? task.assigneeId;
       pushActivity({
         type: "task_started",
         actorId: task.assigneeId,
         taskId,
-        message: `${getAgent(task.assigneeId)?.name} started working on "${task.title}"`,
+        message: `${agentName} started working on "${task.title}"`,
       });
+      sendToTelegram(`⚡ *${agentName}* started: _${task.title}_`);
     },
     [setTasks, pushActivity]
   );
@@ -369,13 +390,16 @@ export function TeamProvider({ children }: { children: ReactNode }) {
             : t
         )
       );
+      const doerName = getAgent(task.assigneeId ?? "")?.name ?? "Someone";
+      const reviewerName = getAgent(reviewerId)?.name ?? reviewerId;
       pushActivity({
         type: "review_requested",
         actorId: task.assigneeId ?? "user",
         targetAgentId: reviewerId,
         taskId,
-        message: `${getAgent(task.assigneeId ?? "")?.name ?? "Someone"} requested review from ${getAgent(reviewerId)?.name}`,
+        message: `${doerName} requested review from ${reviewerName}`,
       });
+      sendToTelegram(`👀 *${doerName}* → review by *${reviewerName}*: _${task.title}_`);
     },
     [setTasks, pushActivity]
   );
@@ -395,12 +419,15 @@ export function TeamProvider({ children }: { children: ReactNode }) {
         bumpStat(task.assigneeId, "tasksCompleted");
       }
       bumpStat(approverId, "reviewsGiven");
+      const approverName = getAgent(approverId)?.name ?? approverId;
+      const doerName = task.assigneeId ? getAgent(task.assigneeId)?.name ?? task.assigneeId : "team";
       pushActivity({
         type: "review_approved",
         actorId: approverId,
         taskId,
-        message: `${getAgent(approverId)?.name} approved "${task.title}" — mission complete ✓`,
+        message: `${approverName} approved "${task.title}" — mission complete ✓`,
       });
+      sendToTelegram(`✅ Mission complete: _${task.title}_\n${approverName} approved ${doerName}'s work.`);
     },
     [setTasks, setAgentStatus, bumpStat, pushActivity]
   );
@@ -464,11 +491,13 @@ export function TeamProvider({ children }: { children: ReactNode }) {
         )
       );
       const task = tasksRef.current.find((t) => t.id === taskId);
+      const agentName = getAgent(agentId)?.name ?? agentId;
       pushActivity({
         type: "task_blocked",
         actorId: agentId, taskId,
-        message: `${getAgent(agentId)?.name} needs input on "${task?.title ?? "task"}"`,
+        message: `${agentName} needs input on "${task?.title ?? "task"}"`,
       });
+      sendToTelegram(`🙋 *${agentName}* needs input on _${task?.title ?? "task"}_:\n${question}`);
     },
     [setTasks, pushActivity]
   );
@@ -711,12 +740,26 @@ export function TeamProvider({ children }: { children: ReactNode }) {
             postComment(task.id, task.assigneeId, m.content, "update");
           }
 
-          // Detect completion: last message ends with "DONE" OR session is no longer running
+          // Detect completion using multiple signals:
+          // 1. Last assistant message ends with DONE
+          // 2. Gateway session status is a terminal value
+          // 3. Fallback: task has been in_progress > 4 minutes with at least one message
           const lastText = assistantMsgs[assistantMsgs.length - 1]?.content ?? "";
           const sessionInfo = openclaw.sessions.find((s) => s.key === task.sessionKey);
+          const terminalStatuses = new Set([
+            "completed", "done", "finished", "stopped", "ended", "idle", "paused",
+          ]);
+          const sessionEnded = sessionInfo
+            ? terminalStatuses.has(sessionInfo.status?.toLowerCase() ?? "")
+            : false;
+          const ageMs = task.startedAt
+            ? Date.now() - new Date(task.startedAt).getTime()
+            : 0;
+          const stale = ageMs > 4 * 60 * 1000 && assistantMsgs.length > 0;
           const completed =
             /(^|\n)\s*DONE\s*$/i.test(lastText) ||
-            (sessionInfo && sessionInfo.status !== "running" && assistantMsgs.length > 0);
+            (sessionEnded && assistantMsgs.length > 0) ||
+            stale;
 
           if (completed) {
             // Pick a reviewer (Cap for QA-style review, else Jarvis)
@@ -733,6 +776,63 @@ export function TeamProvider({ children }: { children: ReactNode }) {
 
     return () => clearInterval(id);
   }, [executionMode, openclaw, postComment, sendToReview]);
+
+  // ============================================================
+  // TELEGRAM INBOUND — user posts a task, optionally with @mentions
+  // ============================================================
+
+  const telegramOffsetRef = useRef(0);
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      if (cancelled) return;
+      const res = await pollTelegram(telegramOffsetRef.current);
+      if (res.ok && res.nextOffset) telegramOffsetRef.current = res.nextOffset;
+      if (res.ok && res.messages.length) {
+        const knownIds = agentsRef.current.map((a) => a.id);
+        for (const msg of res.messages) {
+          const text = msg.text?.trim();
+          if (!text) continue;
+          // Ignore bot echo: only treat human messages from Telegram as task inputs.
+          if (msg.from?.username?.endsWith("bot")) continue;
+          const mentions = parseAgentMentions(text, knownIds);
+          const title = stripMentions(text).slice(0, 120) || "Telegram mission";
+          const description =
+            `From Telegram (${msg.chat.title ?? msg.chat.type}) by ${msg.from?.name ?? "unknown"}` +
+            (mentions.length ? `\n@-mentions: ${mentions.join(", ")}` : "");
+
+          const newTask = createTask({
+            title,
+            description,
+            priority: "medium",
+            tags: ["from-telegram", ...mentions.map((m) => `@${m}`)],
+            creatorId: "user",
+          });
+
+          // If a specific agent was @-mentioned and is available, claim immediately.
+          const mentioned = mentions[0];
+          if (mentioned) {
+            const agent = agentsRef.current.find((a) => a.id === mentioned);
+            if (agent && agent.status !== "offline") {
+              claimTask(newTask.id, mentioned);
+              sendToTelegram(
+                `📥 Received. *${agent.name}* will handle: _${title}_`
+              );
+              continue;
+            }
+          }
+          // Otherwise, let the heartbeat auto-claim.
+          sendToTelegram(`📥 Received. Mission queued to backlog: _${title}_`);
+        }
+      }
+    };
+    tick();
+    const id = setInterval(tick, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [createTask, claimTask]);
 
   // --- Misc ---
 
