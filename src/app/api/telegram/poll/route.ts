@@ -36,6 +36,7 @@ export async function GET(req: NextRequest) {
         update_id: number;
         message: {
           message_id: number;
+          reply_to_message?: { message_id: number };
           from?: { id: number; first_name?: string; username?: string };
           chat: { id: number; type: string; title?: string };
           date: number;
@@ -45,6 +46,7 @@ export async function GET(req: NextRequest) {
       }) => ({
         updateId: u.update_id,
         messageId: u.message.message_id,
+        replyToMessageId: u.message.reply_to_message?.message_id,
         from: u.message.from
           ? {
               id: u.message.from.id,

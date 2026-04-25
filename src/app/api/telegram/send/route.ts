@@ -8,12 +8,22 @@ import { NextRequest, NextResponse } from "next/server";
 //   TELEGRAM_CHAT_ID       — fallback DM chat id (positive number)
 // ============================================================
 
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
+
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: CORS });
+}
+
 export async function POST(req: NextRequest) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token || token.includes("YOUR_BOT_TOKEN")) {
     return NextResponse.json(
       { ok: false, error: "TELEGRAM_BOT_TOKEN not configured in .env.local" },
-      { status: 500 }
+      { status: 500, headers: CORS }
     );
   }
 
@@ -21,12 +31,12 @@ export async function POST(req: NextRequest) {
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ ok: false, error: "Invalid JSON body" }, { status: 400 });
+    return NextResponse.json({ ok: false, error: "Invalid JSON body" }, { status: 400, headers: CORS });
   }
 
   const text = body.text?.trim();
   if (!text) {
-    return NextResponse.json({ ok: false, error: "text is required" }, { status: 400 });
+    return NextResponse.json({ ok: false, error: "text is required" }, { status: 400, headers: CORS });
   }
 
   const chatId =
@@ -36,7 +46,7 @@ export async function POST(req: NextRequest) {
   if (!chatId) {
     return NextResponse.json(
       { ok: false, error: "No chatId: set TELEGRAM_GROUP_CHAT_ID or TELEGRAM_CHAT_ID" },
-      { status: 500 }
+      { status: 500, headers: CORS }
     );
   }
 
@@ -55,12 +65,12 @@ export async function POST(req: NextRequest) {
     if (!data.ok) {
       return NextResponse.json(
         { ok: false, error: data.description ?? "Telegram API error", raw: data },
-        { status: 502 }
+        { status: 502, headers: CORS }
       );
     }
-    return NextResponse.json({ ok: true, messageId: data.result?.message_id });
+    return NextResponse.json({ ok: true, messageId: data.result?.message_id }, { headers: CORS });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ ok: false, error: msg }, { status: 500 });
+    return NextResponse.json({ ok: false, error: msg }, { status: 500, headers: CORS });
   }
 }

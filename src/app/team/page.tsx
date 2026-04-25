@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useTeam } from "@/lib/team-context";
+import { useOpenClaw } from "@/lib/openclaw-context";
 import { getAgent, type Task, type SquadAgent, type ActivityEvent } from "@/lib/team-store";
 import { AssignMissionDialog } from "@/components/assign-mission-dialog";
 import { TaskDetailSheet } from "@/components/task-detail-sheet";
@@ -235,6 +236,9 @@ export default function MissionControlHQ() {
               />
             ))}
           </div>
+          <p className="text-[11px] text-muted-foreground mt-2">
+            Tip: click an agent&apos;s model badge to change which model they use.
+          </p>
 
           {/* Mini mission board preview */}
           <div className="mt-6">
@@ -281,12 +285,16 @@ function AgentCard({
   currentTask: Task | null;
   onClick: (task: Task | null) => void;
 }) {
+  const { models } = useOpenClaw();
+  const { updateAgentModel } = useTeam();
+  const [pickerOpen, setPickerOpen] = useState(false);
   const statusDot: Record<string, string> = {
     online:  "bg-emerald-500",
     busy:    "bg-amber-500 animate-pulse",
     idle:    "bg-blue-400",
     offline: "bg-zinc-500",
   };
+  const currentModelLabel = agent.model.replace(/^claude-cli\//, "");
 
   return (
     <Card className={cn(
@@ -328,6 +336,41 @@ function AgentCard({
               <span>·</span>
               <span>{agent.stats.commentsPosted} comments</span>
               {agent.stats.reviewsGiven > 0 && (<><span>·</span><span>{agent.stats.reviewsGiven} reviews</span></>)}
+            </div>
+
+            <div className="mt-2 relative" onClick={(e) => e.stopPropagation()}>
+              <button
+                onClick={() => setPickerOpen((v) => !v)}
+                className="text-[10px] px-2 py-0.5 rounded bg-muted hover:bg-muted/80 text-muted-foreground font-mono"
+              >
+                {currentModelLabel}
+              </button>
+              {pickerOpen && (
+                <div className="absolute z-10 mt-1 left-0 w-56 max-h-64 overflow-y-auto rounded-md border border-border bg-popover shadow-lg">
+                  {models.length === 0 ? (
+                    <div className="px-2 py-1.5 text-[11px] text-muted-foreground">No models available</div>
+                  ) : (
+                    models.map((m) => {
+                      const fullId = m.id;
+                      const display = fullId.replace(/^claude-cli\//, "");
+                      const isCurrent = fullId === agent.model || display === currentModelLabel;
+                      return (
+                        <button
+                          key={fullId}
+                          onClick={() => { updateAgentModel(agent.id, fullId); setPickerOpen(false); }}
+                          className={cn(
+                            "block w-full text-left px-2 py-1 text-[11px] hover:bg-muted",
+                            isCurrent && "bg-primary/10 text-primary font-medium"
+                          )}
+                        >
+                          {display}
+                          {m.provider && <span className="text-muted-foreground/60 ml-2">({m.provider})</span>}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>

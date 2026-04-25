@@ -11,7 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { useOpenClaw, type OCSession, type OCMessage } from "@/lib/openclaw-context";
+import { useOpenClaw, extractMessageText, type OCSession, type OCMessage } from "@/lib/openclaw-context";
 import {
   Loader2,
   Send,
@@ -81,7 +81,7 @@ export function SessionChatSheet({
     setTimeout(scrollToBottom, 50);
 
     try {
-      await sendChat(session.key, userMessage.content);
+      await sendChat(session.key, extractMessageText(userMessage));
       // Reload history after a short delay to get the response
       setTimeout(async () => {
         await loadHistory();
@@ -103,7 +103,7 @@ export function SessionChatSheet({
     }
   };
 
-  function renderContent(content: string) {
+  function renderContent(content: string | Array<{ type: string; text?: string }>) {
     // Handle content that might be an array (multi-part messages)
     if (typeof content !== "string") {
       try {
@@ -253,29 +253,39 @@ export function SessionChatSheet({
               {messages.length} message{messages.length !== 1 ? "s" : ""}
             </span>
           </div>
-          <div className="flex gap-2">
-            <Textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
-              className="min-h-[44px] max-h-[120px] resize-none bg-background text-sm"
-              disabled={sending}
-            />
-            <Button
-              size="sm"
-              onClick={handleSend}
-              disabled={sending || !input.trim()}
-              className="self-end h-[44px] px-3"
-            >
-              {sending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Send className="h-4 w-4" />
-              )}
-            </Button>
-          </div>
+          {(() => {
+            const terminal = new Set(["completed", "done", "finished", "stopped", "ended", "idle", "paused"]);
+            const sessionClosed = session ? terminal.has(session.status?.toLowerCase() ?? "") : false;
+            return (
+              <div className="flex gap-2">
+                <Textarea
+                  ref={textareaRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder={
+                    sessionClosed
+                      ? "Session closed — start a new task to continue"
+                      : "Type a message... (Enter to send, Shift+Enter for newline)"
+                  }
+                  className="min-h-[44px] max-h-[120px] resize-none bg-background text-sm"
+                  disabled={sending || sessionClosed}
+                />
+                <Button
+                  size="sm"
+                  onClick={handleSend}
+                  disabled={sending || sessionClosed || !input.trim()}
+                  className="self-end h-[44px] px-3"
+                >
+                  {sending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Send className="h-4 w-4" />
+                  )}
+                </Button>
+              </div>
+            );
+          })()}
         </div>
       </SheetContent>
     </Sheet>

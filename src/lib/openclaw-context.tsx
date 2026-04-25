@@ -88,8 +88,18 @@ export interface OCHealth {
 
 export interface OCMessage {
   role: "user" | "assistant" | "system";
-  content: string;
+  // Content may be a plain string or an array of content blocks {type, text}
+  content: string | Array<{ type: string; text?: string }>;
   timestamp?: string;
+}
+
+// Extract plain text from a message regardless of content format
+export function extractMessageText(msg: OCMessage): string {
+  if (typeof msg.content === "string") return msg.content;
+  return msg.content
+    .filter((b) => b.type === "text")
+    .map((b) => b.text ?? "")
+    .join("");
 }
 
 export interface SpawnTaskParams {
@@ -323,7 +333,7 @@ export function OpenClawProvider({ children }: { children: ReactNode }) {
       const client = clientRef.current;
       if (!client?.connected) throw new Error("Not connected");
       const result = await client.request<Record<string, unknown>>(
-        "sessions.history",
+        "chat.history",
         { sessionKey, limit }
       );
       const messages = (result.messages ?? result.history ?? []) as OCMessage[];

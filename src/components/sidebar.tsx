@@ -20,6 +20,9 @@ import {
   ChevronDown,
   ChevronUp,
   Users,
+  StickyNote,
+  Plug,
+  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
@@ -49,6 +52,19 @@ const navSections = [
     items: [
       { href: "/costs", label: "Costs", icon: DollarSign },
       { href: "/activity", label: "Activity", icon: Activity },
+    ],
+  },
+  {
+    label: "Configure",
+    items: [
+      { href: "/providers", label: "Providers", icon: Plug },
+      { href: "/skills", label: "Skills", icon: Sparkles },
+    ],
+  },
+  {
+    label: "Tools",
+    items: [
+      { href: "/notes", label: "Notes", icon: StickyNote },
     ],
   },
 ];

@@ -25,7 +25,7 @@ import {
   type AgentSpecialty,
 } from "./team-store";
 import { useLocalStorage } from "./use-local-storage";
-import { useOpenClaw } from "./openclaw-context";
+import { useOpenClaw, extractMessageText } from "./openclaw-context";
 import { sendToTelegram, pollTelegram, parseAgentMentions, stripMentions } from "./telegram-client";
 
 // ============================================================
@@ -58,7 +58,9 @@ interface TeamContextData {
   blockTask: (taskId: string, agentId: string, question: string) => void;
   unblockTask: (taskId: string, answer: string) => void;
   completeTask: (taskId: string, agentId: string) => void;
+  markComplete: (taskId: string) => void; // user manually marks task done
   postComment: (taskId: string, authorId: string, text: string, type?: CommentType) => void;
+  updateAgentModel: (agentId: string, model: string) => void;
 
   // Autonomy + execution
   autonomyEnabled: boolean;
@@ -90,6 +92,8 @@ const TeamContext = createContext<TeamContextData>({
   blockTask: () => {},
   unblockTask: () => {},
   completeTask: () => {},
+  markComplete: () => {},
+  updateAgentModel: () => {},
   postComment: () => {},
   autonomyEnabled: false,
   setAutonomyEnabled: () => {},
@@ -109,7 +113,14 @@ export function useTeam() {
 // Prompt construction
 // ============================================================
 
-function buildAgentPrompt(agent: SquadAgent, task: Task): string {
+interface AgentContext {
+  workspace: string;
+  missionControlUrl: string;
+  telegram: { botUsername: string; chatId: string | null; groupChatId: string | null; sendEndpoint: string };
+  tools: { files: string[]; runtime: string[]; web: string[]; memory: string[] };
+}
+
+function buildAgentPrompt(agent: SquadAgent, task: Task, ctx: AgentContext | null, allAgents: SquadAgent[]): string {
   const priorWork = task.comments
     .filter((c) => c.type === "update" && c.authorId !== agent.id && c.authorId !== "user")
     .map((c) => {
@@ -118,66 +129,84 @@ function buildAgentPrompt(agent: SquadAgent, task: Task): string {
     })
     .join("\n\n");
 
-  return [
-    agent.systemPrompt,
-    "",
-    "You're part of a 10-agent autonomous squad led by Jarvis.",
-    "Teammates: Jarvis, Fury, Shuri, Stark, Vision, Banner, Cap, Loki, Hawkeye, Rocket.",
-    "",
-    `MISSION: ${task.title}`,
-    `PRIORITY: ${task.priority}`,
-    task.description ? `DETAILS: ${task.description}` : "",
-    task.tags.length ? `TAGS: ${task.tags.join(", ")}` : "",
-    "",
-    priorWork ? `PRIOR WORK FROM TEAMMATES:\n${priorWork}\n` : "",
-    "",
-    "Complete YOUR part of this mission (not the whole thing). Be concise. When done, summarise what you accomplished in 1-3 short paragraphs and explicitly signal completion with the word DONE on the last line. If you need clarification, ask one specific question and stop.",
-  ]
-    .filter(Boolean)
+  const userQuestions = task.comments
+    .filter((c) => c.authorId === "user")
+    .map((c) => `[User]: ${c.text}`)
     .join("\n");
+
+  const teammates = allAgents.map((a) => `${a.name} (${a.specialty})`).join(", ");
+
+  const sections: string[] = [];
+
+  // Identity & role
+  sections.push(`# YOU ARE: ${agent.name}, ${agent.title}`);
+  sections.push(agent.systemPrompt);
+  sections.push("");
+
+  // Team
+  sections.push(`# TEAM`);
+  sections.push(`You are part of an autonomous engineering squad. Teammates: ${teammates}.`);
+  sections.push(`Coordinate by referencing teammates by name. Lead orchestrator: Jarvis.`);
+  sections.push("");
+
+  // Environment & tools
+  if (ctx) {
+    sections.push(`# YOUR ENVIRONMENT`);
+    sections.push(`- Workspace: ${ctx.workspace}  (write all files here using the 'write' or 'edit' tool)`);
+    sections.push(`- Mission Control UI: ${ctx.missionControlUrl}`);
+    sections.push(`- Today's date: ${new Date().toISOString().slice(0, 10)}`);
+    sections.push("");
+
+    sections.push(`# TOOLS YOU CAN USE`);
+    sections.push(`- File operations: ${ctx.tools.files.join(", ")} — for creating/editing project files`);
+    sections.push(`- Runtime: ${ctx.tools.runtime.join(", ")} — for running shell commands, builds, tests`);
+    sections.push(`- Web: ${ctx.tools.web.join(", ")} — for research, fetching docs`);
+    sections.push(`- Memory: ${ctx.tools.memory.join(", ")} — for past context and notes`);
+    sections.push("");
+
+    // Telegram outbound
+    if (ctx.telegram.chatId || ctx.telegram.groupChatId) {
+      sections.push(`# COMMUNICATING WITH THE USER`);
+      sections.push(`The user is reachable via Telegram bot ${ctx.telegram.botUsername}.`);
+      sections.push(`To send a message: POST to ${ctx.missionControlUrl}${ctx.telegram.sendEndpoint}`);
+      sections.push(`  Body: { "text": "your message" }`);
+      sections.push(`  Default chat is auto-routed (user's group/DM). Markdown supported.`);
+      sections.push(`Use this when: progress updates, sharing results, asking clarifying questions.`);
+      sections.push(`DO NOT ask the user "what is your chat ID" — it is already configured.`);
+      sections.push("");
+    }
+  }
+
+  // Mission
+  sections.push(`# YOUR MISSION`);
+  sections.push(`Title: ${task.title}`);
+  sections.push(`Priority: ${task.priority}`);
+  if (task.description) sections.push(`Details: ${task.description}`);
+  if (task.tags.length) sections.push(`Tags: ${task.tags.join(", ")}`);
+  sections.push("");
+
+  if (priorWork) {
+    sections.push(`# PRIOR WORK FROM TEAMMATES`);
+    sections.push(priorWork);
+    sections.push("");
+  }
+
+  if (userQuestions) {
+    sections.push(`# USER MESSAGES IN THIS THREAD`);
+    sections.push(userQuestions);
+    sections.push("");
+  }
+
+  // Completion protocol
+  sections.push(`# HOW TO FINISH`);
+  sections.push(`1. Do the work using the tools above. Write real files, run real commands.`);
+  sections.push(`2. When done, summarize what you accomplished in 1-3 paragraphs.`);
+  sections.push(`3. End your final message with the literal word DONE on the last line.`);
+  sections.push(`4. If you need clarification, ask ONE specific question and stop. Do not invent context.`);
+
+  return sections.filter(Boolean).join("\n");
 }
 
-// Task templates agents can propose themselves (by specialty)
-const AGENT_TASK_IDEAS: Record<AgentSpecialty, string[]> = {
-  orchestration: [],
-  strategy: [
-    "Review active missions and rebalance priorities",
-    "Plan next sprint goals based on completed work",
-  ],
-  engineering: [
-    "Audit recent completed tasks for tech-debt hotspots",
-    "Identify missing acceptance criteria in backlog items",
-  ],
-  architecture: [
-    "Review system design docs for drift",
-    "Propose API versioning strategy",
-  ],
-  development: [
-    "Refactor duplicated logic spotted in recent PRs",
-    "Add missing error boundaries",
-  ],
-  research: [
-    "Research competitor feature gaps",
-    "Investigate latest best practices for the current stack",
-    "Summarise recent industry trends in our domain",
-  ],
-  qa: [
-    "Audit recent merges for missing test coverage",
-    "Run regression sweep on core flows",
-  ],
-  writing: [
-    "Draft release notes for the last week of completed work",
-    "Update README with recent architectural changes",
-  ],
-  security: [
-    "Audit auth flow for OWASP top 10",
-    "Review recent deployments for exposed secrets",
-  ],
-  devops: [
-    "Review CI pipeline for slowdowns",
-    "Audit infrastructure for cost optimization",
-  ],
-};
 
 // ============================================================
 // Provider
@@ -198,6 +227,48 @@ export function TeamProvider({ children }: { children: ReactNode }) {
   const agentsRef = useRef(agents);
   useEffect(() => { tasksRef.current = tasks; }, [tasks]);
   useEffect(() => { agentsRef.current = agents; }, [agents]);
+
+  // ── MongoDB persistence ────────────────────────────────────────────────────
+
+  // Load tasks + activity from DB on mount (DB wins over localStorage)
+  useEffect(() => {
+    (async () => {
+      try {
+        const [tasksRes, actRes] = await Promise.all([
+          fetch("/api/db/tasks").then((r) => r.json()),
+          fetch("/api/db/activity").then((r) => r.json()),
+        ]);
+        // DB is authoritative — even an empty result overrides localStorage
+        if (tasksRes.ok) setTasks(tasksRes.tasks);
+        if (actRes.ok) setActivity(actRes.events);
+      } catch {
+        // fall back to localStorage state already loaded
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Agent environment context (workspace, telegram, tools) — fetched once on mount
+  const agentContextRef = useRef<AgentContext | null>(null);
+  useEffect(() => {
+    fetch("/api/agent/context")
+      .then((r) => r.json())
+      .then((ctx: AgentContext) => { agentContextRef.current = ctx; })
+      .catch(() => {});
+  }, []);
+
+  // Debounced sync to DB whenever tasks or activity change
+  const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+    syncTimerRef.current = setTimeout(() => {
+      fetch("/api/db/sync", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tasks, activity }),
+      }).catch(() => {});
+    }, 1500);
+  }, [tasks, activity]);
 
   // --- Helpers ---
 
@@ -357,23 +428,26 @@ export function TeamProvider({ children }: { children: ReactNode }) {
   );
 
   const startTask = useCallback(
-    (taskId: string) => {
+    (taskId: string, knownAgentId?: string) => {
       const now = new Date().toISOString();
       const task = tasksRef.current.find((t) => t.id === taskId);
-      if (!task?.assigneeId) return;
+      // knownAgentId is passed when called right after claimTask (ref may be stale)
+      const agentId = knownAgentId ?? task?.assigneeId;
+      if (!agentId) return;
       setTasks((prev) =>
         prev.map((t) =>
           t.id === taskId ? { ...t, status: "in_progress" as const, startedAt: now, updatedAt: now } : t
         )
       );
-      const agentName = getAgent(task.assigneeId)?.name ?? task.assigneeId;
+      const agentName = getAgent(agentId)?.name ?? agentId;
+      const title = task?.title ?? "task";
       pushActivity({
         type: "task_started",
-        actorId: task.assigneeId,
+        actorId: agentId,
         taskId,
-        message: `${agentName} started working on "${task.title}"`,
+        message: `${agentName} started working on "${title}"`,
       });
-      sendToTelegram(`⚡ *${agentName}* started: _${task.title}_`);
+      sendToTelegram(`⚡ *${agentName}* started: _${title}_`);
     },
     [setTasks, pushActivity]
   );
@@ -458,19 +532,22 @@ export function TeamProvider({ children }: { children: ReactNode }) {
         )
       );
       bumpStat(rejectorId, "reviewsGiven");
+      const rejectorName = getAgent(rejectorId)?.name ?? rejectorId;
+      const doerName = task.assigneeId ? getAgent(task.assigneeId)?.name ?? task.assigneeId : "assignee";
       pushActivity({
         type: "review_rejected",
         actorId: rejectorId,
         targetAgentId: task.assigneeId ?? undefined,
         taskId,
-        message: `${getAgent(rejectorId)?.name} sent "${task.title}" back: ${reason.slice(0, 80)}`,
+        message: `${rejectorName} sent "${task.title}" back: ${reason.slice(0, 80)}`,
       });
+      sendToTelegram(`🔁 *${rejectorName}* sent _${task.title}_ back to *${doerName}*:\n${reason.slice(0, 120)}`);
     },
     [setTasks, bumpStat, pushActivity]
   );
 
   const blockTask = useCallback(
-    (taskId: string, agentId: string, question: string) => {
+    async (taskId: string, agentId: string, question: string) => {
       const now = new Date().toISOString();
       setTasks((prev) =>
         prev.map((t) =>
@@ -497,7 +574,13 @@ export function TeamProvider({ children }: { children: ReactNode }) {
         actorId: agentId, taskId,
         message: `${agentName} needs input on "${task?.title ?? "task"}"`,
       });
-      sendToTelegram(`🙋 *${agentName}* needs input on _${task?.title ?? "task"}_:\n${question}`);
+      // Store the Telegram message_id so inbound replies can route back here
+      const tgMsgId = await sendToTelegram(`🙋 *${agentName}* needs input on _${task?.title ?? "task"}_:\n${question}`);
+      if (tgMsgId) {
+        setTasks((prev) =>
+          prev.map((t) => t.id === taskId ? { ...t, telegramQuestionMsgId: tgMsgId } : t)
+        );
+      }
     },
     [setTasks, pushActivity]
   );
@@ -505,12 +588,14 @@ export function TeamProvider({ children }: { children: ReactNode }) {
   const unblockTask = useCallback(
     (taskId: string, answer: string) => {
       const now = new Date().toISOString();
+      const task = tasksRef.current.find((t) => t.id === taskId);
       setTasks((prev) =>
         prev.map((t) =>
           t.id === taskId
             ? {
                 ...t,
                 status: "in_progress" as const, updatedAt: now,
+                telegramQuestionMsgId: undefined,
                 comments: [
                   ...t.comments,
                   {
@@ -528,6 +613,10 @@ export function TeamProvider({ children }: { children: ReactNode }) {
         type: "comment", actorId: "user", taskId,
         message: `You answered the question — task resumed`,
       });
+      if (task?.assigneeId) {
+        const agentName = getAgent(task.assigneeId)?.name ?? task.assigneeId;
+        sendToTelegram(`✅ Got it! *${agentName}* is back on _${task.title}_`);
+      }
     },
     [setTasks, pushActivity]
   );
@@ -551,6 +640,38 @@ export function TeamProvider({ children }: { children: ReactNode }) {
     [setTasks, setAgentStatus, bumpStat, pushActivity]
   );
 
+  const updateAgentModel = useCallback(
+    (agentId: string, model: string) => {
+      setAgents((prev) => prev.map((a) => (a.id === agentId ? { ...a, model } : a)));
+    },
+    [setAgents]
+  );
+
+  // User manually marks a task as complete — useful when an agent stalls or the user
+  // is satisfied with partial output. Closes the OpenClaw session if one exists.
+  const markComplete = useCallback(
+    (taskId: string) => {
+      const task = tasksRef.current.find((t) => t.id === taskId);
+      if (!task) return;
+      const now = new Date().toISOString();
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === taskId ? { ...t, status: "done" as const, completedAt: now, updatedAt: now } : t
+        )
+      );
+      if (task.assigneeId) {
+        setAgentStatus(task.assigneeId, "idle", null);
+        bumpStat(task.assigneeId, "tasksCompleted");
+      }
+      pushActivity({
+        type: "task_completed", actorId: "user", taskId,
+        message: `You marked "${task.title}" complete`,
+      });
+      sendToTelegram(`✅ You marked _${task.title}_ complete`);
+    },
+    [setTasks, setAgentStatus, bumpStat, pushActivity]
+  );
+
   // ============================================================
   // REAL EXECUTION — spawn an OpenClaw session for a task
   // ============================================================
@@ -558,10 +679,14 @@ export function TeamProvider({ children }: { children: ReactNode }) {
   const spawnRealSession = useCallback(
     async (task: Task, agent: SquadAgent) => {
       try {
-        const prompt = buildAgentPrompt(agent, task);
+        const prompt = buildAgentPrompt(agent, task, agentContextRef.current, agentsRef.current);
+        // Models in OpenClaw require the "claude-cli/" provider prefix
+        const fullModel = agent.model.startsWith("claude-cli/")
+          ? agent.model
+          : `claude-cli/${agent.model}`;
         const result = (await openclaw.spawnTask({
           task: prompt,
-          model: agent.model,
+          model: fullModel,
           mode: "run",
           label: `mc-${agent.id}-${task.id.slice(-6)}`,
         })) as Record<string, unknown> | undefined;
@@ -605,52 +730,52 @@ export function TeamProvider({ children }: { children: ReactNode }) {
     const currentTasks = tasksRef.current;
     const currentAgents = agentsRef.current;
 
-    // (A) Agent-proposed tasks — occasionally an idle agent creates work
-    if (Math.random() < 0.04 && currentTasks.filter((t) => t.status === "backlog").length < 3) {
-      const idleProposers = currentAgents.filter(
-        (a) => a.status === "online" && a.specialty !== "orchestration" && AGENT_TASK_IDEAS[a.specialty].length > 0
-      );
-      if (idleProposers.length > 0) {
-        const proposer = idleProposers[Math.floor(Math.random() * idleProposers.length)];
-        const ideas = AGENT_TASK_IDEAS[proposer.specialty];
-        const idea = ideas[Math.floor(Math.random() * ideas.length)];
-        createTask({
-          title: idea,
-          description: `Proposed by ${proposer.name} based on recent team activity.`,
-          priority: "low",
-          tags: ["agent-proposed", proposer.specialty],
-          specialty: proposer.specialty,
-          creatorId: proposer.id,
-        });
-        return; // do one action per tick
-      }
-    }
+    // (A) Cleanup — reset agents whose task no longer exists (stale busy state)
+    const taskIds = new Set(currentTasks.map((t) => t.id));
+    const staleAgents = currentAgents.filter(
+      (a) => a.status === "busy" && a.currentTaskId && !taskIds.has(a.currentTaskId)
+    );
+    staleAgents.forEach((a) => setAgentStatus(a.id, "online", null));
 
-    // (B) Claim a backlog task
-    const backlog = currentTasks.find((t) => t.status === "backlog");
-    if (backlog) {
-      const isAvailable = (a: SquadAgent) => a.status !== "busy" && a.status !== "offline";
+    // Track agent availability across this tick (claims happen async, so manage locally)
+    const claimedAgentsThisTick = new Set<string>();
+    const isAvailable = (a: SquadAgent) =>
+      a.status !== "busy" && a.status !== "offline" && !claimedAgentsThisTick.has(a.id);
+
+    // (B) Claim ALL eligible backlog tasks in parallel — one per available agent
+    const backlogTasks = currentTasks.filter((t) => t.status === "backlog");
+    for (const backlog of backlogTasks) {
       const match =
         currentAgents.find((a) => a.specialty === backlog.specialty && isAvailable(a)) ??
         currentAgents.find((a) => a.id === "jarvis" && isAvailable(a));
-      if (match) {
-        claimTask(backlog.id, match.id);
+      if (!match) continue;
+      claimedAgentsThisTick.add(match.id);
+      claimTask(backlog.id, match.id);
 
-        if (executionMode === "real" && openclaw.connected) {
-          // Real execution: start + spawn
-          startTask(backlog.id);
-          spawnRealSession({ ...backlog, assigneeId: match.id }, match);
-        } else {
-          // Simulation
-          setTimeout(() => {
-            startTask(backlog.id);
-            postComment(
-              backlog.id, match.id,
-              `Picking this up. Starting on "${backlog.title}" now.`, "update"
-            );
-          }, 500);
-        }
-        return;
+      if (executionMode === "real" && openclaw.connected) {
+        startTask(backlog.id, match.id);
+        spawnRealSession({ ...backlog, assigneeId: match.id }, match);
+      } else {
+        setTimeout(() => {
+          startTask(backlog.id, match.id);
+          postComment(backlog.id, match.id, `Picking this up. Starting on "${backlog.title}" now.`, "update");
+        }, 500);
+      }
+    }
+
+    // (B2) Kick "claimed" tasks that never got started — process all in parallel
+    const stuckClaimed = currentTasks.filter((t) => t.status === "claimed" && !t.startedAt);
+    for (const t of stuckClaimed) {
+      if (!t.assigneeId) continue;
+      const agent = currentAgents.find((a) => a.id === t.assigneeId);
+      if (!agent) continue;
+      if (executionMode === "real" && openclaw.connected) {
+        startTask(t.id, t.assigneeId);
+        if (!t.sessionKey) spawnRealSession(t, agent);
+      } else {
+        startTask(t.id, t.assigneeId);
+        postComment(t.id, agent.id, `Picking this up. Starting on "${t.title}" now.`, "update");
+        sendToTelegram(`⚡ *${agent.name}* started _${t.title}_`);
       }
     }
 
@@ -701,15 +826,45 @@ export function TeamProvider({ children }: { children: ReactNode }) {
     }
   }, [
     executionMode, openclaw.connected, createTask, claimTask, startTask,
-    postComment, sendToReview, approveTask, rejectTask, spawnRealSession,
+    postComment, sendToReview, approveTask, rejectTask, spawnRealSession, setAgentStatus,
   ]);
 
-  // Heartbeat effect
+  // Heartbeat effect — periodic background tick
   useEffect(() => {
     if (!autonomyEnabled) return;
-    const id = setInterval(heartbeatTick, 4000);
+    const id = setInterval(heartbeatTick, 15000);
     return () => clearInterval(id);
   }, [autonomyEnabled, heartbeatTick]);
+
+  // Reactive heartbeat — fires shortly after tasks change so new tasks get claimed
+  // without waiting up to 15s for the next interval tick
+  useEffect(() => {
+    if (!autonomyEnabled) return;
+    const id = setTimeout(heartbeatTick, 250);
+    return () => clearTimeout(id);
+  }, [tasks, autonomyEnabled, heartbeatTick]);
+
+  // ============================================================
+  // SESSION LIFECYCLE — clear sessionKey from tasks done >24h ago
+  // (frees up the OpenClaw session label so it can be reused)
+  // ============================================================
+  useEffect(() => {
+    const sweep = () => {
+      const now = Date.now();
+      const cutoff = 24 * 60 * 60 * 1000;
+      setTasks((prev) =>
+        prev.map((t) => {
+          if (t.status !== "done" || !t.sessionKey || !t.completedAt) return t;
+          const age = now - new Date(t.completedAt).getTime();
+          if (age < cutoff) return t;
+          return { ...t, sessionKey: undefined };
+        })
+      );
+    };
+    sweep(); // run once on mount
+    const id = setInterval(sweep, 60 * 60 * 1000); // every hour
+    return () => clearInterval(id);
+  }, [setTasks]);
 
   // ============================================================
   // SESSION POLLER — streams real OpenClaw output into comments
@@ -727,24 +882,21 @@ export function TeamProvider({ children }: { children: ReactNode }) {
         if (!task.sessionKey || !task.assigneeId) continue;
         try {
           const history = await openclaw.getSessionHistory(task.sessionKey, 50);
-          // Only consider assistant messages
           const assistantMsgs = history.filter((m) => m.role === "assistant");
-          // Count existing "update" comments from this agent tied to the real run
           const existingUpdates = task.comments.filter(
             (c) => c.authorId === task.assigneeId && c.type === "update" && !c.text.startsWith("Session spawned")
           ).length;
 
-          // Post any new messages we haven't yet
+          // Post any new messages (extract plain text from content blocks)
           const newMsgs = assistantMsgs.slice(existingUpdates);
           for (const m of newMsgs) {
-            postComment(task.id, task.assigneeId, m.content, "update");
+            const text = extractMessageText(m);
+            if (text) postComment(task.id, task.assigneeId, text, "update");
           }
 
-          // Detect completion using multiple signals:
-          // 1. Last assistant message ends with DONE
-          // 2. Gateway session status is a terminal value
-          // 3. Fallback: task has been in_progress > 4 minutes with at least one message
-          const lastText = assistantMsgs[assistantMsgs.length - 1]?.content ?? "";
+          const lastText = assistantMsgs.length > 0
+            ? extractMessageText(assistantMsgs[assistantMsgs.length - 1])
+            : "";
           const sessionInfo = openclaw.sessions.find((s) => s.key === task.sessionKey);
           const terminalStatuses = new Set([
             "completed", "done", "finished", "stopped", "ended", "idle", "paused",
@@ -755,10 +907,13 @@ export function TeamProvider({ children }: { children: ReactNode }) {
           const ageMs = task.startedAt
             ? Date.now() - new Date(task.startedAt).getTime()
             : 0;
-          const stale = ageMs > 4 * 60 * 1000 && assistantMsgs.length > 0;
+          // Stale: session done OR >4 min old with any messages OR >10 min old regardless
+          const stale =
+            (ageMs > 4 * 60 * 1000 && assistantMsgs.length > 0) ||
+            ageMs > 10 * 60 * 1000;
           const completed =
             /(^|\n)\s*DONE\s*$/i.test(lastText) ||
-            (sessionEnded && assistantMsgs.length > 0) ||
+            sessionEnded ||
             stale;
 
           if (completed) {
@@ -793,8 +948,23 @@ export function TeamProvider({ children }: { children: ReactNode }) {
         for (const msg of res.messages) {
           const text = msg.text?.trim();
           if (!text) continue;
-          // Ignore bot echo: only treat human messages from Telegram as task inputs.
+          // Ignore bot echo
           if (msg.from?.username?.endsWith("bot")) continue;
+
+          // ── Check if this is a reply to a blocked-task question ──────────
+          if (msg.replyToMessageId) {
+            const blockedTask = tasksRef.current.find(
+              (t) => t.status === "blocked" && t.telegramQuestionMsgId === msg.replyToMessageId
+            );
+            if (blockedTask) {
+              unblockTask(blockedTask.id, text);
+              const agentName = getAgent(blockedTask.assigneeId ?? "")?.name ?? "Agent";
+              sendToTelegram(`✅ Got it! *${agentName}* is back on _${blockedTask.title}_`);
+              continue;
+            }
+          }
+
+          // ── Otherwise treat as a new task ────────────────────────────────
           const mentions = parseAgentMentions(text, knownIds);
           const title = stripMentions(text).slice(0, 120) || "Telegram mission";
           const description =
@@ -809,19 +979,15 @@ export function TeamProvider({ children }: { children: ReactNode }) {
             creatorId: "user",
           });
 
-          // If a specific agent was @-mentioned and is available, claim immediately.
           const mentioned = mentions[0];
           if (mentioned) {
             const agent = agentsRef.current.find((a) => a.id === mentioned);
             if (agent && agent.status !== "offline") {
               claimTask(newTask.id, mentioned);
-              sendToTelegram(
-                `📥 Received. *${agent.name}* will handle: _${title}_`
-              );
+              sendToTelegram(`📥 Received. *${agent.name}* will handle: _${title}_`);
               continue;
             }
           }
-          // Otherwise, let the heartbeat auto-claim.
           sendToTelegram(`📥 Received. Mission queued to backlog: _${title}_`);
         }
       }
@@ -832,7 +998,7 @@ export function TeamProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       clearInterval(id);
     };
-  }, [createTask, claimTask]);
+  }, [createTask, claimTask, unblockTask]);
 
   // --- Misc ---
 
@@ -865,7 +1031,7 @@ export function TeamProvider({ children }: { children: ReactNode }) {
         agents, tasks, activity, selectedTaskId, selectTask,
         createTask, claimTask, startTask, sendToReview,
         approveTask, rejectTask, blockTask, unblockTask,
-        completeTask, postComment,
+        completeTask, markComplete, postComment, updateAgentModel,
         autonomyEnabled, setAutonomyEnabled,
         executionMode, setExecutionMode,
         gatewayConnected: openclaw.connected,

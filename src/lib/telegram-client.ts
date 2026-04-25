@@ -4,6 +4,7 @@
 export interface TelegramMessage {
   updateId: number;
   messageId: number;
+  replyToMessageId?: number;
   from: { id: number; name: string; username?: string } | null;
   chat: { id: number; type: string; title?: string };
   date: number;
@@ -19,8 +20,9 @@ export interface TelegramPollResponse {
 
 let sendEnabled = true;
 
-export async function sendToTelegram(text: string): Promise<boolean> {
-  if (!sendEnabled || !text.trim()) return false;
+// Returns the Telegram message_id on success, null on failure.
+export async function sendToTelegram(text: string): Promise<number | null> {
+  if (!sendEnabled || !text.trim()) return null;
   try {
     const res = await fetch("/api/telegram/send", {
       method: "POST",
@@ -33,12 +35,12 @@ export async function sendToTelegram(text: string): Promise<boolean> {
         sendEnabled = false;
         console.warn("[telegram] disabled:", data.error);
       }
-      return false;
+      return null;
     }
-    return true;
+    return data.messageId ?? null;
   } catch (err) {
     console.warn("[telegram] send failed:", err);
-    return false;
+    return null;
   }
 }
 

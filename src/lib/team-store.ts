@@ -108,6 +108,7 @@ export interface Task {
   startedAt: string | null;
   completedAt: string | null;
   sessionKey?: string;       // OpenClaw session (when real-execution is wired)
+  telegramQuestionMsgId?: number; // Telegram message_id of the 🙋 question, for reply routing
 }
 
 // --- Activity ---
