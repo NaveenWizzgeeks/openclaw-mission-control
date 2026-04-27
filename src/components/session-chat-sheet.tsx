@@ -254,8 +254,9 @@ export function SessionChatSheet({
             </span>
           </div>
           {(() => {
-            const terminal = new Set(["completed", "done", "finished", "stopped", "ended", "idle", "paused"]);
-            const sessionClosed = session ? terminal.has(session.status?.toLowerCase() ?? "") : false;
+            const hardClosed = new Set(["stopped", "ended"]);
+            const sessionClosed = session ? hardClosed.has(session.status?.toLowerCase() ?? "") : false;
+            const notLive = session ? session.status?.toLowerCase() !== "running" : false;
             return (
               <div className="flex gap-2">
                 <Textarea
@@ -265,7 +266,9 @@ export function SessionChatSheet({
                   onKeyDown={handleKeyDown}
                   placeholder={
                     sessionClosed
-                      ? "Session closed — start a new task to continue"
+                      ? "Session stopped — start a new task to continue"
+                      : notLive
+                      ? `Session is ${session?.status} — send a message to re-engage`
                       : "Type a message... (Enter to send, Shift+Enter for newline)"
                   }
                   className="min-h-[44px] max-h-[120px] resize-none bg-background text-sm"

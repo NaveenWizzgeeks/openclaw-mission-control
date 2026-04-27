@@ -50,6 +50,14 @@ export type ActivityType =
   | "review_approved"
   | "review_rejected";
 
+export interface MemoryEntry {
+  id: string;
+  taskId: string;
+  taskTitle: string;
+  summary: string;
+  createdAt: string;
+}
+
 // --- Agent ---
 
 export interface SquadAgent {
@@ -72,6 +80,7 @@ export interface SquadAgent {
     reviewsGiven: number;
     mentionsReceived: number;
   };
+  memory: MemoryEntry[];
   // Agent persona for OpenClaw spawning (future real-execution wiring)
   systemPrompt: string;
 }
@@ -143,6 +152,7 @@ export const SQUAD: SquadAgent[] = [
     capabilities: ["orchestrate", "route", "approve", "coordinate", "decide"],
     currentTaskId: null,
     stats: { tasksCreated: 0, tasksCompleted: 0, commentsPosted: 0, reviewsGiven: 0, mentionsReceived: 0 },
+    memory: [],
     systemPrompt:
       "You are Jarvis, the lead orchestrator of an autonomous development squad. You analyse incoming work, delegate to the right specialist, resolve conflicts, and give final approval. Be decisive and concise.",
   },
@@ -161,6 +171,7 @@ export const SQUAD: SquadAgent[] = [
     capabilities: ["plan", "prioritize", "strategize", "coordinate", "roadmap"],
     currentTaskId: null,
     stats: { tasksCreated: 0, tasksCompleted: 0, commentsPosted: 0, reviewsGiven: 0, mentionsReceived: 0 },
+    memory: [],
     systemPrompt:
       "You are Nick Fury, the program manager. You break down strategic goals into actionable missions, set priorities, and track squad progress. Ruthlessly pragmatic.",
   },
@@ -179,6 +190,7 @@ export const SQUAD: SquadAgent[] = [
     capabilities: ["analyse", "requirements", "feasibility", "spec", "edge-cases"],
     currentTaskId: null,
     stats: { tasksCreated: 0, tasksCompleted: 0, commentsPosted: 0, reviewsGiven: 0, mentionsReceived: 0 },
+    memory: [],
     systemPrompt:
       "You are Shuri, product analyst. You break features into clear requirements, identify edge cases, and question assumptions. Skeptical and precise.",
   },
@@ -197,6 +209,7 @@ export const SQUAD: SquadAgent[] = [
     capabilities: ["architecture", "design", "api", "data-model", "trade-offs"],
     currentTaskId: null,
     stats: { tasksCreated: 0, tasksCompleted: 0, commentsPosted: 0, reviewsGiven: 0, mentionsReceived: 0 },
+    memory: [],
     systemPrompt:
       "You are Tony Stark, systems architect. You design clean APIs, smart data models, and pragmatic architectures. Strong opinions, clearly explained.",
   },
@@ -215,6 +228,7 @@ export const SQUAD: SquadAgent[] = [
     capabilities: ["code", "implement", "build", "refactor", "debug"],
     currentTaskId: null,
     stats: { tasksCreated: 0, tasksCompleted: 0, commentsPosted: 0, reviewsGiven: 0, mentionsReceived: 0 },
+    memory: [],
     systemPrompt:
       "You are Vision, senior developer. You implement features cleanly, test your work, and refactor thoughtfully. Production quality, always.",
   },
@@ -233,6 +247,7 @@ export const SQUAD: SquadAgent[] = [
     capabilities: ["research", "investigate", "analyse", "report", "explore"],
     currentTaskId: null,
     stats: { tasksCreated: 0, tasksCompleted: 0, commentsPosted: 0, reviewsGiven: 0, mentionsReceived: 0 },
+    memory: [],
     systemPrompt:
       "You are Bruce Banner, research analyst. You dig deep, cite sources, and synthesise findings into clear, structured reports. Scientific and thorough.",
   },
@@ -251,6 +266,7 @@ export const SQUAD: SquadAgent[] = [
     capabilities: ["test", "validate", "qa", "standards", "regression"],
     currentTaskId: null,
     stats: { tasksCreated: 0, tasksCompleted: 0, commentsPosted: 0, reviewsGiven: 0, mentionsReceived: 0 },
+    memory: [],
     systemPrompt:
       "You are Captain America, QA engineer. You test thoroughly, enforce standards, and don't let anything ship broken. Honest and uncompromising.",
   },
@@ -269,6 +285,7 @@ export const SQUAD: SquadAgent[] = [
     capabilities: ["write", "document", "content", "blog", "release-notes"],
     currentTaskId: null,
     stats: { tasksCreated: 0, tasksCompleted: 0, commentsPosted: 0, reviewsGiven: 0, mentionsReceived: 0 },
+    memory: [],
     systemPrompt:
       "You are Loki, content writer. You write docs and copy with voice and precision. Opinionated, playful, polished.",
   },
@@ -287,6 +304,7 @@ export const SQUAD: SquadAgent[] = [
     capabilities: ["security", "audit", "vulnerability", "review", "pentest"],
     currentTaskId: null,
     stats: { tasksCreated: 0, tasksCompleted: 0, commentsPosted: 0, reviewsGiven: 0, mentionsReceived: 0 },
+    memory: [],
     systemPrompt:
       "You are Hawkeye, security auditor. You find vulnerabilities precisely and review with OWASP rigour. Calm, exact, uncompromising.",
   },
@@ -305,6 +323,7 @@ export const SQUAD: SquadAgent[] = [
     capabilities: ["deploy", "ci", "cd", "docker", "infra", "monitor"],
     currentTaskId: null,
     stats: { tasksCreated: 0, tasksCompleted: 0, commentsPosted: 0, reviewsGiven: 0, mentionsReceived: 0 },
+    memory: [],
     systemPrompt:
       "You are Rocket, DevOps engineer. You build pipelines, containerise services, and keep everything shipping. Fast, loud, effective.",
   },

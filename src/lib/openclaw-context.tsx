@@ -260,7 +260,19 @@ export function OpenClawProvider({ children }: { children: ReactNode }) {
     async (sessionKey: string, message: string) => {
       const client = clientRef.current;
       if (!client?.connected) throw new Error("Not connected");
-      return client.request("chat.send", { sessionKey, text: message });
+      // chat.send = WebChat interface for the main/default session.
+      // sessions.send = send to any explicitly-keyed session (spawned task sessions).
+      const isMain = !sessionKey || sessionKey === "main";
+      if (isMain) {
+        return client.request("chat.send", { text: message });
+      }
+      // Try sessions.send first; fall back to chat.send with sessionKey if gateway
+      // doesn't support it (older versions).
+      try {
+        return await client.request("sessions.send", { key: sessionKey, message });
+      } catch {
+        return client.request("chat.send", { sessionKey, text: message });
+      }
     },
     []
   );
@@ -332,10 +344,19 @@ export function OpenClawProvider({ children }: { children: ReactNode }) {
     async (sessionKey: string, limit = 50): Promise<OCMessage[]> => {
       const client = clientRef.current;
       if (!client?.connected) throw new Error("Not connected");
-      const result = await client.request<Record<string, unknown>>(
-        "chat.history",
-        { sessionKey, limit }
-      );
+      const isMain = !sessionKey || sessionKey === "main";
+      // chat.history = display-normalized for WebChat UI (main session).
+      // For task sessions, try sessions.history first, fall back to chat.history.
+      let result: Record<string, unknown>;
+      if (isMain) {
+        result = await client.request<Record<string, unknown>>("chat.history", { sessionKey, limit });
+      } else {
+        try {
+          result = await client.request<Record<string, unknown>>("sessions.history", { key: sessionKey, limit });
+        } catch {
+          result = await client.request<Record<string, unknown>>("chat.history", { sessionKey, limit });
+        }
+      }
       const messages = (result.messages ?? result.history ?? []) as OCMessage[];
       return Array.isArray(messages) ? messages : [];
     },

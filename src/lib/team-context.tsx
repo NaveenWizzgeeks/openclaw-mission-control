@@ -23,6 +23,7 @@ import {
   type ActivityEvent,
   type CommentType,
   type AgentSpecialty,
+  type MemoryEntry,
 } from "./team-store";
 import { useLocalStorage } from "./use-local-storage";
 import { useOpenClaw, extractMessageText } from "./openclaw-context";
@@ -61,6 +62,7 @@ interface TeamContextData {
   markComplete: (taskId: string) => void; // user manually marks task done
   postComment: (taskId: string, authorId: string, text: string, type?: CommentType) => void;
   updateAgentModel: (agentId: string, model: string) => void;
+  addAgentMemory: (agentId: string, taskId: string, taskTitle: string, summary: string) => void;
 
   // Autonomy + execution
   autonomyEnabled: boolean;
@@ -94,6 +96,7 @@ const TeamContext = createContext<TeamContextData>({
   completeTask: () => {},
   markComplete: () => {},
   updateAgentModel: () => {},
+  addAgentMemory: () => {},
   postComment: () => {},
   autonomyEnabled: false,
   setAutonomyEnabled: () => {},
@@ -185,6 +188,12 @@ function buildAgentPrompt(agent: SquadAgent, task: Task, ctx: AgentContext | nul
   if (task.tags.length) sections.push(`Tags: ${task.tags.join(", ")}`);
   sections.push("");
 
+  if (agent.memory && agent.memory.length > 0) {
+    sections.push(`# YOUR MEMORY (recent completed tasks)`);
+    sections.push(agent.memory.slice(0, 5).map(m => `- [${m.taskTitle}]: ${m.summary}`).join('\n'));
+    sections.push('');
+  }
+
   if (priorWork) {
     sections.push(`# PRIOR WORK FROM TEAMMATES`);
     sections.push(priorWork);
@@ -230,17 +239,27 @@ export function TeamProvider({ children }: { children: ReactNode }) {
 
   // ── MongoDB persistence ────────────────────────────────────────────────────
 
-  // Load tasks + activity from DB on mount (DB wins over localStorage)
+  // Load tasks + activity + agents from DB on mount (DB wins over localStorage)
   useEffect(() => {
     (async () => {
       try {
-        const [tasksRes, actRes] = await Promise.all([
+        const [tasksRes, actRes, agentsRes] = await Promise.all([
           fetch("/api/db/tasks").then((r) => r.json()),
           fetch("/api/db/activity").then((r) => r.json()),
+          fetch("/api/db/agents").then((r) => r.json()),
         ]);
         // DB is authoritative — even an empty result overrides localStorage
         if (tasksRes.ok) setTasks(tasksRes.tasks);
         if (actRes.ok) setActivity(actRes.events);
+        // For agents, only merge memory from DB (preserve SQUAD defaults for everything else)
+        if (agentsRes.ok && agentsRes.agents?.length) {
+          setAgents((prev) =>
+            prev.map((a) => {
+              const dbAgent = agentsRes.agents.find((d: SquadAgent) => d.id === a.id);
+              return dbAgent ? { ...a, memory: dbAgent.memory ?? [] } : a;
+            })
+          );
+        }
       } catch {
         // fall back to localStorage state already loaded
       }
@@ -257,7 +276,7 @@ export function TeamProvider({ children }: { children: ReactNode }) {
       .catch(() => {});
   }, []);
 
-  // Debounced sync to DB whenever tasks or activity change
+  // Debounced sync to DB whenever tasks, activity, or agents change
   const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
@@ -265,10 +284,10 @@ export function TeamProvider({ children }: { children: ReactNode }) {
       fetch("/api/db/sync", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ tasks, activity }),
+        body: JSON.stringify({ tasks, activity, agents }),
       }).catch(() => {});
     }, 1500);
-  }, [tasks, activity]);
+  }, [tasks, activity, agents]);
 
   // --- Helpers ---
 
@@ -292,6 +311,26 @@ export function TeamProvider({ children }: { children: ReactNode }) {
         prev.map((a) =>
           a.id === agentId
             ? { ...a, stats: { ...a.stats, [key]: a.stats[key] + delta } }
+            : a
+        )
+      );
+    },
+    [setAgents]
+  );
+
+  const addAgentMemory = useCallback(
+    (agentId: string, taskId: string, taskTitle: string, summary: string) => {
+      const entry: MemoryEntry = {
+        id: `mem-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        taskId,
+        taskTitle,
+        summary,
+        createdAt: new Date().toISOString(),
+      };
+      setAgents((prev) =>
+        prev.map((a) =>
+          a.id === agentId
+            ? { ...a, memory: [entry, ...(a.memory ?? [])].slice(0, 20) }
             : a
         )
       );
@@ -491,6 +530,12 @@ export function TeamProvider({ children }: { children: ReactNode }) {
       if (task.assigneeId) {
         setAgentStatus(task.assigneeId, "idle", null);
         bumpStat(task.assigneeId, "tasksCompleted");
+        addAgentMemory(
+          task.assigneeId,
+          task.id,
+          task.title,
+          `Completed "${task.title}" — approved by ${getAgent(approverId)?.name ?? approverId}`
+        );
       }
       bumpStat(approverId, "reviewsGiven");
       const approverName = getAgent(approverId)?.name ?? approverId;
@@ -502,8 +547,34 @@ export function TeamProvider({ children }: { children: ReactNode }) {
         message: `${approverName} approved "${task.title}" — mission complete ✓`,
       });
       sendToTelegram(`✅ Mission complete: _${task.title}_\n${approverName} approved ${doerName}'s work.`);
+      // Create task memory record
+      fetch('/api/memory', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          type: 'task',
+          date: new Date().toISOString().slice(0, 10),
+          title: `Task Complete: ${task.title}`,
+          summary: `${approverName} approved ${doerName}'s work on "${task.title}". ${task.description ? task.description.slice(0, 200) : ''}`,
+          highlights: [
+            `Assignee: ${doerName}`,
+            `Reviewer: ${approverName}`,
+            `Priority: ${task.priority}`,
+            `Specialty: ${task.specialty}`,
+            ...(task.tags.length ? [`Tags: ${task.tags.join(', ')}`] : []),
+          ],
+          metadata: {
+            agentId: task.assigneeId ?? undefined,
+            agentName: doerName,
+            taskId: task.id,
+            taskTitle: task.title,
+          },
+          tags: [task.specialty, task.priority, ...(task.tags ?? [])],
+          pinned: false,
+        }),
+      }).catch(() => {});
     },
-    [setTasks, setAgentStatus, bumpStat, pushActivity]
+    [setTasks, setAgentStatus, bumpStat, pushActivity, addAgentMemory]
   );
 
   const rejectTask = useCallback(
@@ -632,12 +703,19 @@ export function TeamProvider({ children }: { children: ReactNode }) {
       setAgentStatus(agentId, "idle", null);
       bumpStat(agentId, "tasksCompleted");
       const task = tasksRef.current.find((t) => t.id === taskId);
+      const updateCount = task?.comments.filter((c) => c.type === "update").length ?? 0;
+      addAgentMemory(
+        agentId,
+        taskId,
+        task?.title ?? "task",
+        `Completed "${task?.title ?? "task"}"${updateCount ? ` after ${updateCount} updates` : ""}`
+      );
       pushActivity({
         type: "task_completed", actorId: agentId, taskId,
         message: `${getAgent(agentId)?.name} completed "${task?.title ?? "task"}"`,
       });
     },
-    [setTasks, setAgentStatus, bumpStat, pushActivity]
+    [setTasks, setAgentStatus, bumpStat, pushActivity, addAgentMemory]
   );
 
   const updateAgentModel = useCallback(
@@ -668,6 +746,33 @@ export function TeamProvider({ children }: { children: ReactNode }) {
         message: `You marked "${task.title}" complete`,
       });
       sendToTelegram(`✅ You marked _${task.title}_ complete`);
+      // Create task memory record
+      const doerNameMC = task.assigneeId ? getAgent(task.assigneeId)?.name ?? task.assigneeId : "team";
+      fetch('/api/memory', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          type: 'task',
+          date: new Date().toISOString().slice(0, 10),
+          title: `Task Complete: ${task.title}`,
+          summary: `You marked "${task.title}" complete. ${task.description ? task.description.slice(0, 200) : ''}`,
+          highlights: [
+            `Assignee: ${doerNameMC}`,
+            `Marked complete by: You`,
+            `Priority: ${task.priority}`,
+            `Specialty: ${task.specialty}`,
+            ...(task.tags.length ? [`Tags: ${task.tags.join(', ')}`] : []),
+          ],
+          metadata: {
+            agentId: task.assigneeId ?? undefined,
+            agentName: doerNameMC,
+            taskId: task.id,
+            taskTitle: task.title,
+          },
+          tags: [task.specialty, task.priority, ...(task.tags ?? [])],
+          pinned: false,
+        }),
+      }).catch(() => {});
     },
     [setTasks, setAgentStatus, bumpStat, pushActivity]
   );
@@ -686,6 +791,7 @@ export function TeamProvider({ children }: { children: ReactNode }) {
           : `claude-cli/${agent.model}`;
         const result = (await openclaw.spawnTask({
           task: prompt,
+          agentId: agent.id,   // route to the registered OpenClaw agent, not just main
           model: fullModel,
           mode: "run",
           label: `mc-${agent.id}-${task.id.slice(-6)}`,
@@ -922,6 +1028,26 @@ export function TeamProvider({ children }: { children: ReactNode }) {
               agentsRef.current.find((a) => a.id === "cap" && a.id !== task.assigneeId) ??
               agentsRef.current.find((a) => a.id === "jarvis");
             if (reviewer) sendToReview(task.id, reviewer.id);
+
+            // Save session digest to DB — mandatory on every session end
+            const agentRecord = agentsRef.current.find((a) => a.id === task.assigneeId);
+            fetch("/api/sessions/digest", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                sessionKey: task.sessionKey,
+                agentId: task.assigneeId ?? "unknown",
+                agentName: agentRecord?.name ?? task.assigneeId ?? "unknown",
+                taskId: task.id,
+                taskTitle: task.title,
+                outcome: lastText.slice(0, 800),
+                messageCount: history.length,
+                totalTokens: sessionInfo?.totalTokens ?? 0,
+                sessionStatus: sessionInfo?.status ?? "completed",
+                startedAt: task.startedAt ?? undefined,
+                endedAt: new Date().toISOString(),
+              }),
+            }).catch(() => {}); // fire-and-forget — digest must not block the poller
           }
         } catch {
           // transient error, try again next tick
@@ -1031,7 +1157,7 @@ export function TeamProvider({ children }: { children: ReactNode }) {
         agents, tasks, activity, selectedTaskId, selectTask,
         createTask, claimTask, startTask, sendToReview,
         approveTask, rejectTask, blockTask, unblockTask,
-        completeTask, markComplete, postComment, updateAgentModel,
+        completeTask, markComplete, postComment, updateAgentModel, addAgentMemory,
         autonomyEnabled, setAutonomyEnabled,
         executionMode, setExecutionMode,
         gatewayConnected: openclaw.connected,

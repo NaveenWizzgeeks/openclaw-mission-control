@@ -7,6 +7,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json() as {
       tasks?: Record<string, unknown>[];
       activity?: Record<string, unknown>[];
+      agents?: Record<string, unknown>[];
     };
     const db = await getDb();
 
@@ -32,6 +33,17 @@ export async function POST(req: NextRequest) {
         },
       }));
       ops.push(db.collection("activity").bulkWrite(bulkActivity));
+    }
+
+    if (body.agents?.length) {
+      const bulkAgents = body.agents.map((a) => ({
+        updateOne: {
+          filter: { id: a.id },
+          update: { $set: a },
+          upsert: true,
+        },
+      }));
+      ops.push(db.collection("agents").bulkWrite(bulkAgents));
     }
 
     await Promise.all(ops);

@@ -50,6 +50,10 @@ A professional-grade control plane for an autonomous 10-agent OpenClaw squad. Th
 | `src/app/api/telegram/poll/route.ts` | Inbound: long-polls Telegram `getUpdates` and returns new messages. |
 | `src/components/spawn-task-dialog.tsx` | UI to spawn a one-shot task. |
 | `src/components/assign-mission-dialog.tsx` | UI to add a task to the backlog. |
+| `src/app/agents/page.tsx` | Agents page: Live Operations banner + per-agent SOUL.md viewer. |
+| `agents/<id>/SOUL.md` | Canonical role definition file for each of the 10 squad agents. |
+| `src/app/api/sessions/digest/route.ts` | GET list / POST upsert session digests into `session_digests` MongoDB collection. |
+| `src/app/api/sessions/digest-sweep/route.ts` | POST day-end sweep: back-fills any missing digests for all completed tasks. |
 
 ---
 
