@@ -3,8 +3,72 @@
 Locked spec for the v2 rewrite. Master stays as the v1 reference; all v2 work lands here.
 
 Author: Jarvis (acting as Fury for planning).
-Date: 2026-04-28.
-Status: Locked. §16 decided 2026-04-28.
+Date: 2026-04-28 (rev 2 same day, evening).
+Status: Rev 2 — re-baselined on new master after pulling missed commits.
+
+---
+
+## REVISION 2 — what changed (2026-04-28 evening)
+
+After pulling `origin/master` we discovered two large commits we'd missed (`e2a2924`, `5f4ceed`) that landed a server-side mission orchestrator and a fully different architecture from what the v1 base assumed. The plan below is largely still valid for the **plumbing layer**, but the **orchestration layer is now built — by master, not by v2**. We rebased v2 onto the new master and dropped redundant work.
+
+### Already on master (we keep, don't rebuild):
+- `src/lib/mission-orchestrator.ts` (1,288 lines): full mission state machine — `clarification → analyzing → planned → executing → done`. Spawns one OpenClaw session per task, polls for completion markers, runs Cap review with 3-retry, chains TaskSummary into next task's prompt, broadcasts LiveEvents, compiles final report.
+- `/api/missions/*`, `/api/memory/*`, `/api/heartbeat`, `/api/db/agents`.
+- `/api/events` — LiveEvent SSE pipe (orchestrator → UI). `live-feed.tsx` consumes it.
+- `agents/<id>/SOUL.md` × 10 — agent identity prompts.
+- Workspace concept (`/api/workspaces`, `src/app/workspace/[id]`, `src/app/mission/[id]`).
+- Server-heartbeat safety net for stuck missions.
+
+### Dropped from rev 1:
+- "Lead-loop — Jarvis as permanent decision session." Master's orchestrator already routes via Shuri/Fury/Cap state machine. Building a second router on top would conflict with it.
+- "Agent mailbox via `@mention` injection." Cross-agent messaging is a future feature; orchestrator handles Cap↔Worker deterministically. Don't add cycle-creating channels until correctness is locked.
+- The criticism of "heartbeat-driven autonomy mixed with UI lifecycle" — server heartbeat now exists; React heartbeat is just a UI ticker.
+
+### Survives from rev 1, still relevant:
+1. **Persistent gateway WS via daemon.** Master's `callGateway` opens a fresh WebSocket per call (handshake + 1 req + close). Mission-orchestrator hits `callGateway` repeatedly — `sessions.create`, then polls `sessions.history` and `chat.history` per task. Daemon eliminates the per-request handshake. *Already shipped (steps 1–3).*
+2. **Push session events to browser.** Orchestrator currently polls. SSE pipe at `/api/daemon/events` is ready to deliver gateway-pushed session events the moment we observe their names. *Already shipped (step 4).*
+3. **Worktree-per-task.** Orchestrator spawns sessions but they share `~/.openclaw/workspace`. Two workers writing to the same place will stomp. Real risk for parallel/sequential same-workspace tasks. *Step 5 in rev 2.*
+4. **Cost meter.** N task-sessions per mission makes this more important, not less. *Step 6 in rev 2.*
+5. **Operator chat into any live worker session.** Drop in mid-task to course-correct. *Step 7 in rev 2.*
+6. **Security pass.** Token off the client; daemon-only gateway access. *Step 8 in rev 2.*
+
+### File-namespace fix from the rebase:
+- `/api/events` stays for orchestrator LiveEvents (master).
+- `/api/daemon/events` is the new home for gateway/daemon events (v2). `useDaemonEvents` and `useSessionStream` updated accordingly.
+
+---
+
+## REVISION 2 — Locked 5-agent workflow
+
+Master ships 10 SOUL.md identity files (banner, cap, fury, hawkeye, jarvis, loki, rocket, shuri, stark, vision). Per Harish's directive (2026-04-28 22:51 IST), the v2 workflow narrows to **5 agents** with one canonical lane each. The other 5 SOULs stay on disk for future use; orchestrator agent-pickers are constrained to the canonical 5.
+
+| Role | Agent | Responsibility | Triggered by |
+|---|---|---|---|
+| Lead | **Jarvis** | Receives mission, emits final executive report. Doesn't implement. | mission create, mission done |
+| Analyst | **Shuri** | Clarifying questions when scope is unclear; research notes. Single-agent analyst — no Banner/Hawkeye/Rocket alternatives. | mission status `clarification` |
+| Planner | **Fury** | Breaks mission into ordered, dependency-aware tasks. | mission status `analyzing` |
+| Worker | **Stark** | Executes every task. (No Loki/Vision/Banner workers in v2 — keeps the workflow predictable.) | task status `pending` |
+| Reviewer | **Cap** | Approves or rejects worker output. 3-retry budget. | task status `review` |
+
+Flow: `Jarvis(receive) → Shuri(clarify) → Fury(plan) → Stark(execute) → Cap(review) → [retry Stark up to 3×] → Stark(next task) → … → Jarvis(report)`.
+
+### Build order, rev 2:
+
+| # | Step | Done when |
+|---|---|---|
+| ✅ | Daemon skeleton + persistent gateway link | Shipped |
+| ✅ | Web → daemon SSE bridge at `/api/daemon/events` | Shipped |
+| ✅ | All gateway calls forward through daemon (zero per-req handshakes) | Shipped |
+| ✅ | `useSessionStream` push pipe + 1 s `chat.history` fallback | Shipped |
+| 1 | Lock orchestrator's agent picker to the canonical 5 | Mission spawn never picks Banner/Hawkeye/Loki/Rocket/Vision |
+| 2 | Audit orchestrator for correctness bugs | Smoke-tested mission runs end-to-end without hangs / lost completions / missed retries |
+| 3 | Worktree-per-task | Two parallel Stark sessions don't write to same dir |
+| 4 | Cost meter (per-task, per-mission, global) | Live $ visible on mission detail + top bar |
+| 5 | Operator chat panel for any live session | I can interject mid-task; injection persists as `comment.kind = "operator-inject"` |
+| 6 | Security pass | No `NEXT_PUBLIC_*` for tokens; gateway calls only inside daemon |
+
+---
 
 ---
 
