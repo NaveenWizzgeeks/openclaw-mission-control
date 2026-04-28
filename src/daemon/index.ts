@@ -36,6 +36,12 @@ async function main() {
     } catch (err) {
       log.warn(`health probe failed: ${(err as Error).message}`);
     }
+    try {
+      await link.request("sessions.subscribe", {});
+      log.info("subscribed to all sessions");
+    } catch (err) {
+      log.warn(`global subscribe failed: ${(err as Error).message}`);
+    }
   });
 
   link.start();

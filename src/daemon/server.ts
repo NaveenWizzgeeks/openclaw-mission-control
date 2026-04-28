@@ -145,6 +145,60 @@ async function handleGatewayRequest(req: IncomingMessage, res: ServerResponse) {
   }
 }
 
+async function handleSessionsSpawn(
+  req: IncomingMessage,
+  res: ServerResponse,
+) {
+  if (!linkRef) {
+    res.writeHead(503, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: false, error: "gateway link not attached" }));
+    return;
+  }
+  let body: Record<string, unknown>;
+  try {
+    body = JSON.parse((await readBody(req)) || "{}");
+  } catch {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: false, error: "bad JSON body" }));
+    return;
+  }
+  const task = typeof body.task === "string" ? body.task : "";
+  if (!task) {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: false, error: "task required" }));
+    return;
+  }
+  try {
+    const created = await linkRef.request<{ sessionKey?: string; key?: string }>(
+      "sessions.create",
+      {
+        task,
+        agentId: body.agentId,
+        model: body.model,
+        label: body.label,
+      },
+    );
+    const sessionKey = created.sessionKey ?? created.key;
+    if (sessionKey) {
+      try {
+        await linkRef.request("sessions.subscribe", { sessionKey });
+        log.info(`spawned + subscribed: ${sessionKey}`);
+      } catch (err) {
+        log.warn(
+          `subscribed-after-spawn failed for ${sessionKey}: ${(err as Error).message}`,
+        );
+      }
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, data: { sessionKey, ...created } }));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "unknown";
+    log.warn(`sessions.spawn failed: ${message}`);
+    res.writeHead(502, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: false, error: message }));
+  }
+}
+
 function notFound(res: ServerResponse) {
   res.writeHead(404, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ ok: false, error: "not_found" }));
@@ -165,6 +219,10 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === "POST" && url.pathname === "/gateway/request") {
     void handleGatewayRequest(req, res);
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/sessions/spawn") {
+    void handleSessionsSpawn(req, res);
     return;
   }
   notFound(res);

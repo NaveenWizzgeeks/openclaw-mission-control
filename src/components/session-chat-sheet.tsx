@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { useOpenClaw, extractMessageText, type OCSession, type OCMessage } from "@/lib/openclaw-context";
+import { useSessionStream } from "@/lib/use-session-stream";
 import {
   Loader2,
   Send,
@@ -33,11 +34,10 @@ export function SessionChatSheet({
   onOpenChange,
   session,
 }: SessionChatSheetProps) {
-  const { sendChat, getSessionHistory } = useOpenClaw();
-  const [messages, setMessages] = useState<OCMessage[]>([]);
+  const { sendChat } = useOpenClaw();
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
-  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<OCMessage | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -45,53 +45,43 @@ export function SessionChatSheet({
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, []);
 
-  const loadHistory = useCallback(async () => {
-    if (!session) return;
-    setLoadingHistory(true);
-    try {
-      const history = await getSessionHistory(session.key, 50);
-      setMessages(history);
-      setTimeout(scrollToBottom, 100);
-    } catch {
-      setMessages([]);
-    } finally {
-      setLoadingHistory(false);
-    }
-  }, [session, getSessionHistory, scrollToBottom]);
+  const stream = useSessionStream(session?.key ?? null, {
+    enabled: open && !!session,
+    initialLimit: 50,
+  });
+  const baseMessages = stream.messages;
+  const messages: OCMessage[] = errorMsg
+    ? [...baseMessages, errorMsg]
+    : baseMessages;
+  const loadingHistory = stream.loading && baseMessages.length === 0;
 
   useEffect(() => {
-    if (open && session) {
-      loadHistory();
-    } else {
-      setMessages([]);
+    if (!open) {
       setInput("");
+      setErrorMsg(null);
+      return;
     }
-  }, [open, session, loadHistory]);
+    setTimeout(scrollToBottom, 100);
+  }, [open, baseMessages.length, scrollToBottom]);
 
   const handleSend = async () => {
     if (!input.trim() || !session || sending) return;
 
-    const userMessage: OCMessage = {
-      role: "user",
-      content: input.trim(),
-    };
-    setMessages((prev) => [...prev, userMessage]);
+    const text = input.trim();
     setInput("");
+    setErrorMsg(null);
     setSending(true);
     setTimeout(scrollToBottom, 50);
 
     try {
-      await sendChat(session.key, extractMessageText(userMessage));
-      // Reload history after a short delay to get the response
-      setTimeout(async () => {
-        await loadHistory();
+      await sendChat(session.key, text);
+      void stream.refresh();
+      setTimeout(() => {
+        void stream.refresh();
         setSending(false);
-      }, 2000);
+      }, 1500);
     } catch {
-      setMessages((prev) => [
-        ...prev,
-        { role: "system", content: "Failed to send message" },
-      ]);
+      setErrorMsg({ role: "system", content: "Failed to send message" });
       setSending(false);
     }
   };
@@ -241,12 +231,12 @@ export function SessionChatSheet({
             <Button
               variant="ghost"
               size="icon-sm"
-              onClick={loadHistory}
-              disabled={loadingHistory}
+              onClick={() => void stream.refresh()}
+              disabled={stream.loading}
               title="Refresh messages"
             >
               <RefreshCw
-                className={`h-3.5 w-3.5 ${loadingHistory ? "animate-spin" : ""}`}
+                className={`h-3.5 w-3.5 ${stream.loading ? "animate-spin" : ""}`}
               />
             </Button>
             <span className="text-[10px] text-muted-foreground">
