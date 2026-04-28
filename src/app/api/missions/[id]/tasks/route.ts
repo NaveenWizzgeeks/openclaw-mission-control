@@ -12,7 +12,7 @@ import { SQUAD } from "@/lib/team-store";
 // Body: {
 //   title: string;
 //   description: string;
-//   agentId?: string;            // defaults to "vision"
+//   agentId?: string;            // v2: locked to "stark" — workflow has one worker
 //   insertAfterSequence?: number; // 1-based; defaults to "append at end"
 // }
 //
@@ -44,8 +44,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (!doc) return NextResponse.json({ ok: false, error: "Not found" }, { status: 404 });
     const mission = doc as unknown as Mission;
 
-    const validAgentIds = new Set(SQUAD.map((a) => a.id));
-    const agentId = body.agentId && validAgentIds.has(body.agentId) ? body.agentId : "vision";
+    // v2: workflow locked to 5 canonical agents; Stark is the only worker.
+    const agentId = "stark";
     const agent = SQUAD.find((a) => a.id === agentId)!;
 
     const existing = [...(mission.tasks ?? [])].sort((a, b) => a.sequenceNumber - b.sequenceNumber);

@@ -1163,21 +1163,16 @@ MISSION DESCRIPTION: ${mission.description}
 CLARIFICATION Q&A:
 ${clarificationContext}
 
-AVAILABLE AGENTS:
-- vision : frontend, React/Next.js, TypeScript, UI components, CSS
-- stark  : architecture, API design, DB schema, backend Node.js
-- banner : research, specs, documentation, analysis
-- cap    : QA, testing, test cases, code review
-- loki   : technical writing, user docs, copy, READMEs
-- hawkeye: security review, auth, vulnerability checks
-- rocket : DevOps, Docker, CI/CD, deployment, env config
+AVAILABLE WORKER (only one — assign every task to this agent):
+- stark : full-stack execution — frontend, backend, infra, code, docs, tests.
+          Cap will review afterward, so don't split tasks just to vary reviewers.
 
 Respond with ONLY a valid JSON array. No markdown fences. No prose. Format:
 [
   {
     "title": "Short task title",
     "description": "Specific acceptance criteria — what files, endpoints, or components must exist; concrete enough to execute without further questions",
-    "agentId": "vision",
+    "agentId": "stark",
     "estimatedMinutes": 20,
     "dependsOn": []
   }
@@ -1243,13 +1238,13 @@ OUTPUT THE JSON NOW. Nothing else.`;
   }
 
   const now = new Date().toISOString();
-  const validAgentIds = new Set([
-    "jarvis", "fury", "shuri", "stark", "vision",
-    "banner", "cap", "loki", "hawkeye", "rocket",
-  ]);
+  // v2: workflow locked to 5 canonical agents. Workers are always Stark;
+  // any other agentId Fury returns gets remapped.
+  const workerAgentId = "stark";
+  const validWorkerIds = new Set([workerAgentId]);
 
   const tasks: MissionTask[] = parsed.map((t, i) => {
-    const agentId = validAgentIds.has(t.agentId) ? t.agentId : "vision";
+    const agentId = validWorkerIds.has(t.agentId) ? t.agentId : workerAgentId;
     const agentName = agentId.charAt(0).toUpperCase() + agentId.slice(1);
     return {
       id: `task-${Date.now()}-${i}`,

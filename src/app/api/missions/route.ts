@@ -5,19 +5,10 @@ import { broadcast } from "@/app/api/events/route";
 import { SQUAD } from "@/lib/team-store";
 import { runShuriClarification } from "@/lib/mission-orchestrator";
 
-// Pick the best analyst for a mission based on description keywords
-function pickAnalyst(description: string) {
-  const text = description.toLowerCase();
-  if (/research|investigate|study|explore|market|competitor/.test(text)) {
-    return SQUAD.find((a) => a.id === "banner") ?? SQUAD.find((a) => a.id === "shuri")!;
-  }
-  if (/security|vuln|audit|pentest/.test(text)) {
-    return SQUAD.find((a) => a.id === "hawkeye")!;
-  }
-  if (/deploy|ci|docker|infra/.test(text)) {
-    return SQUAD.find((a) => a.id === "rocket")!;
-  }
-  return SQUAD.find((a) => a.id === "shuri")!; // default: product analyst
+// v2: workflow locked to 5 canonical agents
+// (Jarvis, Shuri, Fury, Stark, Cap). Shuri is the only analyst.
+function pickAnalyst() {
+  return SQUAD.find((a) => a.id === "shuri")!;
 }
 
 function backfillMission(m: Record<string, unknown>): Mission {
@@ -45,8 +36,8 @@ export async function POST(req: NextRequest) {
     const now = new Date().toISOString();
     const db = await getDb();
 
-    // Pick analyst agent (drives clarification phase only — Fury handles planning)
-    const analyst = pickAnalyst(body.description);
+    // v2: analyst locked to Shuri (5-agent workflow)
+    const analyst = pickAnalyst();
 
     const mission: Mission = {
       id: `msn-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
