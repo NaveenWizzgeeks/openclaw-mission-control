@@ -21,6 +21,10 @@ export const config = {
   request: {
     defaultTimeoutMs: 15_000,
   },
+  server: {
+    host: process.env.MC_DAEMON_HOST ?? "127.0.0.1",
+    port: Number(process.env.MC_DAEMON_PORT ?? 18790),
+  },
   logging: {
     level: (process.env.MC_LOG_LEVEL ?? "info") as
       | "debug"
