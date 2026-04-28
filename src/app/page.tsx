@@ -1,281 +1,289 @@
 "use client";
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { useOpenClaw } from "@/lib/openclaw-context";
-import { useChatContext } from "@/lib/chat-context";
-import { ConnectionStatus } from "@/components/connection-status";
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import {
-  Bot,
-  Zap,
-  Server,
-  Cpu,
-  Clock,
-  Loader2,
-  MessageSquare,
+  Plus, Rocket, CheckCheck, Play, Loader2, Globe,
+  Users, Zap, Brain, Trash2,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { LiveFeed } from "@/components/live-feed";
+import { useWorkspace } from "@/lib/workspace-context";
+import { cn } from "@/lib/utils";
+import type { Mission } from "@/lib/mission-types";
 
-export default function Dashboard() {
-  const { loading, sessions, agents, cronJobs, models, tools, status } =
-    useOpenClaw();
-  const { openChat } = useChatContext();
-
-  const activeSessions = sessions.filter((s) => s.status === "running");
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-full min-h-[400px]">
-        <div className="flex flex-col items-center gap-3 text-muted-foreground">
-          <Loader2 className="h-8 w-8 animate-spin" />
-          <p className="text-sm">Connecting to OpenClaw gateway...</p>
-        </div>
-      </div>
-    );
-  }
+function WorkspaceCard({
+  workspace,
+  missions,
+  onClick,
+  onDelete,
+}: {
+  workspace: { id: string; name: string; icon: string; color: string; description: string };
+  missions: Mission[];
+  onClick: () => void;
+  onDelete: (id: string) => void;
+}) {
+  const active = missions.filter((m) => !["done"].includes(m.status));
+  const done = missions.filter((m) => m.status === "done");
+  const executing = missions.filter((m) => m.status === "executing");
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Live overview of your OpenClaw instance
-          </p>
+    <div
+      className="group relative p-5 rounded-xl border border-[#30363d] bg-[#161b22] hover:border-[#58a6ff]/50 hover:shadow-[0_0_20px_rgba(88,166,255,0.05)] transition-all cursor-pointer"
+      onClick={onClick}
+    >
+      <div className="flex items-start justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 rounded-xl bg-[#21262d] flex items-center justify-center text-xl">
+            {workspace.icon}
+          </div>
+          <div>
+            <h3 className="font-semibold text-[#e6edf3]">{workspace.name}</h3>
+            {workspace.description && (
+              <p className="text-xs text-[#8b949e] mt-0.5 line-clamp-1">{workspace.description}</p>
+            )}
+          </div>
         </div>
-        <ConnectionStatus />
+        <button
+          onClick={(e) => { e.stopPropagation(); onDelete(workspace.id); }}
+          className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded text-[#8b949e] hover:text-[#f85149]"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className="border-border/50 bg-card/50 backdrop-blur">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Active Sessions</p>
-                <p className="text-3xl font-bold mt-1">{activeSessions.length}</p>
-                <p className="text-xs text-muted-foreground mt-1">of {sessions.length} total</p>
-              </div>
-              <div className="h-12 w-12 rounded-xl bg-emerald-500/10 flex items-center justify-center">
-                <Zap className="h-6 w-6 text-emerald-500" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-border/50 bg-card/50 backdrop-blur">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Agents</p>
-                <p className="text-3xl font-bold mt-1">{agents.length}</p>
-                <p className="text-xs text-muted-foreground mt-1">registered agents</p>
-              </div>
-              <div className="h-12 w-12 rounded-xl bg-blue-500/10 flex items-center justify-center">
-                <Bot className="h-6 w-6 text-blue-500" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-border/50 bg-card/50 backdrop-blur">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Cron Jobs</p>
-                <p className="text-3xl font-bold mt-1">{cronJobs.length}</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {cronJobs.filter((j) => j.enabled).length} enabled
-                </p>
-              </div>
-              <div className="h-12 w-12 rounded-xl bg-violet-500/10 flex items-center justify-center">
-                <Clock className="h-6 w-6 text-violet-500" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-border/50 bg-card/50 backdrop-blur">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Models</p>
-                <p className="text-3xl font-bold mt-1">{models.length}</p>
-                <p className="text-xs text-muted-foreground mt-1">available models</p>
-              </div>
-              <div className="h-12 w-12 rounded-xl bg-amber-500/10 flex items-center justify-center">
-                <Cpu className="h-6 w-6 text-amber-500" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+      <div className="grid grid-cols-3 gap-3">
+        <div className="text-center p-2.5 rounded-lg bg-[#0d1117]">
+          <p className="text-lg font-bold text-[#e6edf3] font-mono">{active.length}</p>
+          <p className="text-[10px] text-[#8b949e] mt-0.5">Active</p>
+        </div>
+        <div className="text-center p-2.5 rounded-lg bg-[#0d1117]">
+          <p className="text-lg font-bold text-[#ffa657] font-mono">{executing.length}</p>
+          <p className="text-[10px] text-[#8b949e] mt-0.5">Executing</p>
+        </div>
+        <div className="text-center p-2.5 rounded-lg bg-[#0d1117]">
+          <p className="text-lg font-bold text-[#3fb950] font-mono">{done.length}</p>
+          <p className="text-[10px] text-[#8b949e] mt-0.5">Done</p>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Sessions */}
-        <Card className="lg:col-span-2 border-border/50 bg-card/50 backdrop-blur">
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-base font-semibold">Sessions</CardTitle>
-              <span className="text-xs text-muted-foreground">{sessions.length} total</span>
+      {executing.length > 0 && (
+        <div className="mt-3 flex items-center gap-1.5 text-xs text-[#ffa657]">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          <span className="truncate">{executing[0]?.title}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function Dashboard() {
+  const router = useRouter();
+  const { workspaces, createWorkspace, deleteWorkspace, loading } = useWorkspace();
+  const [allMissions, setAllMissions] = useState<Mission[]>([]);
+  const [creating, setCreating] = useState(false);
+  const [newWsName, setNewWsName] = useState("");
+  const [newWsIcon, setNewWsIcon] = useState("🚀");
+  const [showNewWs, setShowNewWs] = useState(false);
+
+  useEffect(() => {
+    async function fetchMissions() {
+      const res = await fetch("/api/missions");
+      const data = await res.json() as { ok: boolean; missions: Mission[] };
+      if (data.ok) setAllMissions(data.missions);
+    }
+    fetchMissions();
+    const id = setInterval(fetchMissions, 10_000);
+    return () => clearInterval(id);
+  }, []);
+
+  async function handleCreateWorkspace() {
+    if (!newWsName.trim()) return;
+    setCreating(true);
+    try {
+      const ws = await createWorkspace({ name: newWsName.trim(), icon: newWsIcon });
+      setNewWsName("");
+      setShowNewWs(false);
+      router.push(`/workspace/${ws.id}`);
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  const totalExecuting = allMissions.filter((m) => m.status === "executing").length;
+  const totalActive = allMissions.filter((m) => !["done"].includes(m.status)).length;
+  const totalDone = allMissions.filter((m) => m.status === "done").length;
+
+  const EMOJIS = ["🚀", "⚡", "🔥", "🎯", "🌐", "🤖", "💡", "🔬", "🛡️", "📡"];
+
+  return (
+    <div className="flex h-[calc(100vh-56px)]">
+      {/* Main */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="p-6 space-y-8 max-w-5xl">
+          {/* Header */}
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-xl bg-[#58a6ff]/15 flex items-center justify-center">
+              <Zap className="h-5 w-5 text-[#58a6ff]" />
             </div>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {sessions.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-8">No active sessions</p>
-            ) : (
-              sessions.map((session) => (
-                <div
-                  key={session.key}
-                  className="flex items-center gap-4 p-3 rounded-lg border border-border/50 hover:bg-muted/50 transition-colors cursor-pointer group"
-                  onClick={() => openChat(session)}
-                >
-                  <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                    <Server className="h-5 w-5 text-primary" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-sm truncate">{session.key}</span>
-                      <div
-                        className={`h-2 w-2 rounded-full ${
-                          session.status === "running"
-                            ? "bg-emerald-500"
-                            : session.status === "idle"
-                            ? "bg-amber-500"
-                            : "bg-zinc-500"
-                        }`}
-                      />
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      {session.channel} · {session.model}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-sm font-mono">
-                      {((session.totalTokens || 0) / 1000).toFixed(1)}K
-                    </p>
-                    <p className="text-xs text-muted-foreground">tokens</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Badge
-                      variant="outline"
-                      className={`text-[10px] ${
-                        session.status === "running"
-                          ? "text-emerald-400 border-emerald-500/30"
-                          : "text-zinc-400"
-                      }`}
-                    >
-                      {session.status}
-                    </Badge>
-                    <MessageSquare className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+            <div>
+              <h1 className="text-2xl font-bold text-[#e6edf3]">Mission Control</h1>
+              <p className="text-xs text-[#8b949e]">Sequential multi-agent orchestration</p>
+            </div>
+          </div>
+
+          {/* Global stats */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[
+              { label: "Workspaces", value: workspaces.length,  icon: Globe,     color: "text-[#58a6ff]",  bg: "bg-[#58a6ff]/10",  spin: false },
+              { label: "Active",     value: totalActive,         icon: Play,      color: "text-[#ffa657]",  bg: "bg-[#ffa657]/10",  spin: false },
+              { label: "Executing",  value: totalExecuting,      icon: Loader2,   color: "text-[#d2a8ff]",  bg: "bg-[#d2a8ff]/10",  spin: totalExecuting > 0 },
+              { label: "Completed",  value: totalDone,           icon: CheckCheck,color: "text-[#3fb950]",  bg: "bg-[#3fb950]/10",  spin: false },
+            ].map((s) => (
+              <div key={s.label} className="p-4 rounded-xl bg-[#161b22] border border-[#30363d]">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-[10px] text-[#8b949e] uppercase tracking-wider">{s.label}</p>
+                  <div className={cn("h-6 w-6 rounded-md flex items-center justify-center", s.bg)}>
+                    <s.icon className={cn("h-3.5 w-3.5", s.color, s.spin && "animate-spin")} />
                   </div>
                 </div>
-              ))
-            )}
-          </CardContent>
-        </Card>
+                <p className={cn("text-2xl font-bold font-mono", s.color)}>{s.value}</p>
+              </div>
+            ))}
+          </div>
 
-        {/* System Info */}
-        <Card className="border-border/50 bg-card/50 backdrop-blur">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base font-semibold">System Status</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {status && typeof status === "object" && "raw" in status && status.raw ? (
-              <pre className="text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed">
-                {String(status.raw)}
-              </pre>
-            ) : status ? (
-              <div className="space-y-3">
-                {Object.entries(status).map(([key, value]) => (
-                  <div key={key} className="flex justify-between text-xs">
-                    <span className="text-muted-foreground capitalize">{key}</span>
-                    <span className="font-mono truncate max-w-[200px]">
-                      {typeof value === "object" ? JSON.stringify(value) : String(value)}
-                    </span>
+          {/* How it works — show only when no workspaces */}
+          {workspaces.length === 0 && !loading && (
+            <div className="p-5 rounded-xl bg-[#58a6ff]/5 border border-[#58a6ff]/20">
+              <h3 className="font-semibold text-[#e6edf3] mb-3 flex items-center gap-2">
+                <Brain className="h-4 w-4 text-[#58a6ff]" />
+                How it works
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-[#8b949e]">
+                {[
+                  { n: "1", title: "Give Jarvis a mission", desc: "No priority levels. Just describe what you want to build or accomplish." },
+                  { n: "2", title: "Analyst gathers requirements", desc: "An analyst agent asks clarifying questions, researches, and breaks it into tasks." },
+                  { n: "3", title: "Sequential execution", desc: "Tasks run one at a time in order. Heartbeat checks progress every 5 minutes." },
+                ].map((step) => (
+                  <div key={step.n} className="flex gap-3">
+                    <div className="h-6 w-6 rounded-full bg-[#58a6ff]/15 flex items-center justify-center text-[#58a6ff] text-xs font-bold shrink-0 mt-0.5">{step.n}</div>
+                    <div>
+                      <p className="font-medium text-[#e6edf3] mb-0.5">{step.title}</p>
+                      <p>{step.desc}</p>
+                    </div>
                   </div>
                 ))}
               </div>
-            ) : (
-              <p className="text-xs text-muted-foreground text-center py-4">No status data</p>
+            </div>
+          )}
+
+          {/* Workspaces section */}
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xs font-semibold text-[#8b949e] uppercase tracking-wider flex items-center gap-2">
+                <Globe className="h-3.5 w-3.5" />
+                Workspaces
+              </h2>
+              <Button variant="ghost" size="sm" onClick={() => setShowNewWs(true)}
+                className="text-[#8b949e] hover:text-[#e6edf3] hover:bg-[#21262d] text-xs h-7">
+                <Plus className="h-3.5 w-3.5 mr-1" /> New
+              </Button>
+            </div>
+
+            {showNewWs && (
+              <div className="mb-4 p-4 rounded-xl border border-[#58a6ff]/30 bg-[#58a6ff]/5 space-y-3">
+                <p className="text-xs font-semibold text-[#58a6ff]">Create workspace</p>
+                <div className="flex gap-2 flex-wrap">
+                  {EMOJIS.map((e) => (
+                    <button key={e} onClick={() => setNewWsIcon(e)}
+                      className={cn("h-8 w-8 rounded-lg text-base flex items-center justify-center transition-all",
+                        newWsIcon === e ? "bg-[#58a6ff]/20 ring-1 ring-[#58a6ff]" : "bg-[#21262d] hover:bg-[#30363d]")}>
+                      {e}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <Input value={newWsName} onChange={(e) => setNewWsName(e.target.value)}
+                    placeholder="Workspace name" onKeyDown={(e) => e.key === "Enter" && handleCreateWorkspace()}
+                    className="bg-[#0d1117] border-[#30363d] text-[#e6edf3] placeholder:text-[#484f58]" autoFocus />
+                  <Button onClick={handleCreateWorkspace} disabled={!newWsName.trim() || creating}
+                    className="bg-[#58a6ff] hover:bg-[#58a6ff]/90 text-[#0d1117] font-semibold shrink-0">
+                    {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create"}
+                  </Button>
+                  <Button variant="ghost" onClick={() => setShowNewWs(false)}
+                    className="text-[#8b949e] hover:text-[#e6edf3] hover:bg-[#21262d] shrink-0">Cancel</Button>
+                </div>
+              </div>
             )}
 
-            <div className="pt-3 border-t border-border/50 space-y-2">
-              <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-                Available Tools
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {tools.length} tools registered
-              </p>
+            {loading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-5 w-5 text-[#58a6ff] animate-spin" />
+              </div>
+            ) : workspaces.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center border border-dashed border-[#30363d] rounded-xl">
+                <Globe className="h-10 w-10 text-[#30363d] mb-3" />
+                <p className="text-sm font-medium text-[#e6edf3] mb-1">No workspaces yet</p>
+                <p className="text-xs text-[#8b949e] mb-4">Create a workspace to organize your missions</p>
+                <Button onClick={() => setShowNewWs(true)} size="sm"
+                  className="bg-[#58a6ff] hover:bg-[#58a6ff]/90 text-[#0d1117] font-semibold">
+                  <Plus className="h-4 w-4 mr-1.5" /> Create Workspace
+                </Button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {workspaces.map((ws) => (
+                  <WorkspaceCard key={ws.id} workspace={ws}
+                    missions={allMissions.filter((m) => m.workspaceId === ws.id)}
+                    onClick={() => router.push(`/workspace/${ws.id}`)}
+                    onDelete={deleteWorkspace} />
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Squad */}
+          <div className="p-4 rounded-xl bg-[#161b22] border border-[#30363d]">
+            <div className="flex items-center gap-2 mb-3">
+              <Users className="h-4 w-4 text-[#8b949e]" />
+              <p className="text-xs font-semibold text-[#8b949e] uppercase tracking-wider">The Squad</p>
             </div>
-          </CardContent>
-        </Card>
+            <div className="flex flex-wrap gap-2">
+              {[
+                { id: "jarvis", name: "Jarvis", role: "Orchestrator", color: "#58a6ff", you: true },
+                { id: "shuri",  name: "Shuri",  role: "Analyst",      color: "#d2a8ff" },
+                { id: "banner", name: "Banner", role: "Research",      color: "#3fb950" },
+                { id: "stark",  name: "Stark",  role: "Architect",     color: "#f85149" },
+                { id: "vision", name: "Vision", role: "Dev",           color: "#ffa657" },
+                { id: "cap",    name: "Cap",    role: "QA",            color: "#58a6ff" },
+                { id: "hawkeye",name: "Hawkeye",role: "Security",      color: "#a371f7" },
+                { id: "rocket", name: "Rocket", role: "DevOps",        color: "#fb923c" },
+                { id: "loki",   name: "Loki",   role: "Writer",        color: "#4ade80" },
+                { id: "fury",   name: "Fury",   role: "Strategy",      color: "#71717a" },
+              ].map((a) => (
+                <div key={a.id} className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#21262d] border border-[#30363d]">
+                  <div className="h-4 w-4 rounded text-[10px] font-bold flex items-center justify-center"
+                    style={{ backgroundColor: a.color + "33", color: a.color }}>
+                    {a.name[0]}
+                  </div>
+                  <span className="text-xs text-[#e6edf3]">{a.name}</span>
+                  {a.you && <span className="text-[9px] text-[#58a6ff] font-semibold">you</span>}
+                  <span className="text-[10px] text-[#484f58]">{a.role}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* Models & Jobs */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card className="border-border/50 bg-card/50 backdrop-blur">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base font-semibold">Available Models</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {models.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-4">No models found</p>
-            ) : (
-              models.map((model, idx) => (
-                <div
-                  key={idx}
-                  className="flex items-center justify-between p-2 rounded-lg border border-border/50"
-                >
-                  <div className="flex items-center gap-2">
-                    <Cpu className="h-4 w-4 text-muted-foreground" />
-                    <span className="text-sm font-mono">
-                      {typeof model === "string" ? model : model.id || model.name || JSON.stringify(model)}
-                    </span>
-                  </div>
-                </div>
-              ))
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="border-border/50 bg-card/50 backdrop-blur">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base font-semibold">Scheduled Jobs</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {cronJobs.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-4">
-                No scheduled jobs yet
-              </p>
-            ) : (
-              cronJobs.map((job) => (
-                <div
-                  key={job.id}
-                  className="flex items-center justify-between p-2 rounded-lg border border-border/50"
-                >
-                  <div className="flex items-center gap-2">
-                    <Clock className="h-4 w-4 text-muted-foreground" />
-                    <div>
-                      <span className="text-sm font-medium">{job.name || job.id}</span>
-                      {job.description && (
-                        <p className="text-xs text-muted-foreground">{job.description}</p>
-                      )}
-                    </div>
-                  </div>
-                  <Badge
-                    variant="outline"
-                    className={`text-[10px] ${
-                      job.enabled ? "text-emerald-400 border-emerald-500/30" : "text-zinc-400"
-                    }`}
-                  >
-                    {job.enabled ? "Enabled" : "Disabled"}
-                  </Badge>
-                </div>
-              ))
-            )}
-          </CardContent>
-        </Card>
+      {/* Live Feed */}
+      <div className="w-80 border-l border-[#30363d] shrink-0 hidden lg:flex flex-col">
+        <LiveFeed className="h-full" />
       </div>
     </div>
   );
 }
+
+// suppress unused
+void Rocket;
