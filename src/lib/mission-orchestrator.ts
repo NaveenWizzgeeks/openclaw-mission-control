@@ -66,7 +66,7 @@ export async function spawnAgentSession(opts: {
     waitForCompletion = true,
     timeoutMs = DEFAULT_TASK_TIMEOUT_MS,
     pollIntervalMs = POLL_INTERVAL_MS,
-    isComplete = defaultCompletionDetector,
+    isComplete = workerCompletionDetector,
     heartbeatMissionId,
   } = opts;
 
@@ -99,9 +99,8 @@ export async function spawnAgentSession(opts: {
     await sleep(pollIntervalMs);
 
     let assistantText = "";
+    let fetchOk = false;
     try {
-      // Try sessions.history first (newer gateways), fall back to chat.history
-      // (matches the pattern in openclaw-context.tsx getSessionHistory).
       let hist: Record<string, unknown>;
       try {
         hist = await callGateway<Record<string, unknown>>("sessions.history", {
@@ -120,9 +119,16 @@ export async function spawnAgentSession(opts: {
         .map((m) => extractText(m.content))
         .filter(Boolean)
         .join("\n");
+      fetchOk = true;
     } catch (err) {
-      // Both history methods failed — log once and keep polling.
       console.error("[orchestrator] history fetch failed:", err instanceof Error ? err.message : err);
+    }
+
+    if (!fetchOk) {
+      // Don't let history failures count toward soft-completion stability —
+      // resetting prevents N consecutive failures from looking like "stable".
+      stableTicks = 0;
+      if (heartbeatMissionId) await touchMission(heartbeatMissionId, sessionKey);
       continue;
     }
 
@@ -132,9 +138,6 @@ export async function spawnAgentSession(opts: {
       return { sessionKey, output, timedOut: false };
     }
 
-    // Soft completion: if the output has been stable for 3 consecutive polls
-    // and we have content, treat as done. Catches agents that finish without
-    // emitting a marker.
     if (assistantText.length > 0 && assistantText.length === lastLength) {
       stableTicks++;
       if (stableTicks >= 3) {
@@ -145,8 +148,6 @@ export async function spawnAgentSession(opts: {
       lastLength = assistantText.length;
     }
 
-    // Heartbeat the mission record so the kanban's isStuck check
-    // doesn't false-trigger while we're actively polling.
     if (heartbeatMissionId) {
       await touchMission(heartbeatMissionId, sessionKey);
     }
@@ -155,13 +156,18 @@ export async function spawnAgentSession(opts: {
   return { sessionKey, output, timedOut: true };
 }
 
-function defaultCompletionDetector(text: string): boolean {
-  return (
-    text.includes("TASK_COMPLETE") ||
-    text.includes("DONE:") ||
-    /\bAPPROVED\b/.test(text) ||
-    /\bREJECTED\b/.test(text)
-  );
+// Worker tasks must finish with TASK_COMPLETE on its own line.
+// Anchoring to a line break stops mid-text mentions ("emit TASK_COMPLETE
+// when finished…") from triggering false completion.
+function workerCompletionDetector(text: string): boolean {
+  return /(?:^|\n)\s*TASK_COMPLETE\b/m.test(text) ||
+         /(?:^|\n)\s*DONE\s*:/m.test(text);
+}
+
+// Cap reviews must lead with APPROVED or REJECTED (per agents/cap/SOUL.md
+// instructions). Match the first line; tolerate preamble whitespace.
+function reviewCompletionDetector(text: string): boolean {
+  return /(?:^|\n)\s*(APPROVED|REJECTED)\b/m.test(text);
 }
 
 // Detects when Fury has produced a parseable JSON array.
@@ -606,6 +612,7 @@ export async function reviewTask(missionId: string, taskId: string): Promise<voi
       waitForCompletion: true,
       timeoutMs: DEFAULT_REVIEW_TIMEOUT_MS,
       heartbeatMissionId: missionId,
+      isComplete: reviewCompletionDetector,
     });
   } catch (err) {
     // Reviewer failed → conservatively approve to avoid blocking the mission
@@ -628,9 +635,13 @@ export async function reviewTask(missionId: string, taskId: string): Promise<voi
     return;
   }
 
+  // Cap may include preamble before the verdict line. Find the first
+  // line that starts with APPROVED or REJECTED rather than requiring it
+  // at position zero of the trimmed output.
   const verdict = result.output.trim();
-  const approved = /^\s*APPROVED/i.test(verdict);
-  const rejected = /^\s*REJECTED/i.test(verdict);
+  const verdictLineMatch = verdict.match(/(?:^|\n)\s*(APPROVED|REJECTED)\b[^\n]*/i);
+  const approved = !!verdictLineMatch && /APPROVED/i.test(verdictLineMatch[1]);
+  const rejected = !!verdictLineMatch && /REJECTED/i.test(verdictLineMatch[1]);
 
   if (approved) {
     await patchTask(missionId, taskId, {
