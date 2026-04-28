@@ -4,7 +4,7 @@ Locked spec for the v2 rewrite. Master stays as the v1 reference; all v2 work la
 
 Author: Jarvis (acting as Fury for planning).
 Date: 2026-04-28.
-Status: Draft awaiting sign-off.
+Status: Locked. §16 decided 2026-04-28.
 
 ---
 
@@ -206,12 +206,12 @@ Steps 1–4 are the minimum demo. 5–7 are the "this is actually a control plan
 - localStorage primary store
 - `NEXT_PUBLIC_OPENCLAW_TOKEN`
 
-## 16. Open questions for sign-off
+## 16. Decisions (locked 2026-04-28)
 
-1. **Daemon process model.** Run it as `next dev` sidecar, or independent `node` process supervised by something like `pm2` / a systemd unit? Recommendation: independent process; Next.js can't reliably hold a long-lived WS through HMR.
-2. **Worktree base repo per agent.** Where do per-agent project repos live, and is that config in `team-store.ts` or a new `agent-repos.json`? Recommendation: extend `team-store.ts` with optional `repoUrl` / `defaultBranch`.
-3. **Operator chat persistence.** Save operator-injected messages into Mongo as task comments, or only into the live session? Recommendation: both — comment with `kind: "operator-inject"`.
-4. **Cost meter pricing source.** Hardcode the pricing table, or pull from a config endpoint? Recommendation: hardcode v2.0; revisit in v2.1.
+1. **Daemon process model →** independent `node` process. Survives Next HMR, can be supervised in prod, doesn't fight the framework. Dev: `concurrently` runs `next dev` and the daemon. Prod: standalone unit (systemd / pm2 / docker — TBD at deploy time, not relevant to architecture).
+2. **Worktree base repo per agent →** extend `team-store.ts` with optional `repo: { url, defaultBranch }`. One source of truth for agent identity + their project repo. No second config file.
+3. **Operator chat persistence →** both. Operator messages get a Mongo comment `kind: "operator-inject"` (audit trail) AND get delivered into the live session (so the agent receives them). The `[operator]` wire prefix stays.
+4. **Cost meter pricing source →** hardcoded `shared/pricing.ts`. Anthropic pricing changes rarely and updates require a deploy anyway. Revisit if we add other providers in v2.1.
 
 ## 17. Dispatch plan
 
@@ -225,4 +225,4 @@ If no Cap-level agent exists in this workspace yet, Stark writes its own tests a
 
 ---
 
-**Awaiting Harish's sign-off before dispatching Stark.** Particularly on §16 questions and on whether step ordering is right for the demo deadline shape.
+**Build is unblocked.** Step 1 (daemon skeleton + persistent gateway link) starts now.
