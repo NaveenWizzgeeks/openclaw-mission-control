@@ -63,7 +63,7 @@ export function useSessionStream(
 
   useEffect(() => {
     if (!enabled || !sessionKey || typeof window === "undefined") return;
-    const es = new EventSource("/api/events");
+    const es = new EventSource("/api/daemon/events");
 
     const onSse = (raw: MessageEvent) => {
       try {
