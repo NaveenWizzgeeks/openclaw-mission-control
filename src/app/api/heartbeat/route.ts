@@ -4,8 +4,20 @@ import { writeFile, readFile } from "fs/promises";
 import { join } from "path";
 import type { Mission, HeartbeatEntry } from "@/lib/mission-types";
 import { broadcast } from "@/app/api/events/route";
+import { executeNextTask } from "@/lib/mission-orchestrator";
+
+// Periodic tick. Used for two purposes:
+//  1. Refresh HEARTBEAT.md so external observers can see what's running
+//  2. Resume genuinely-stuck missions (executing status, no activeAgent,
+//     no in_progress task, no orchestrator updatedAt activity for >5 min)
+//
+// IMPORTANT: This route MUST NOT auto-advance missions itself. The mission
+// orchestrator (lib/mission-orchestrator.ts) owns task lifecycle. Heartbeat
+// only acts as a safety net for stuck missions where the orchestrator was
+// killed mid-flight (e.g. dev server restart).
 
 const HEARTBEAT_PATH = join(process.cwd(), "..", "HEARTBEAT.md");
+const STUCK_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 
 async function readHeartbeatMd(): Promise<string> {
   try {
@@ -39,6 +51,9 @@ async function writeHeartbeatMd(entries: HeartbeatEntry[], pendingMissions: Miss
       if (currentTask) {
         lines.push(`- **Running:** ${currentTask.title} (${currentTask.agentName})`);
       }
+      if (m.activeAgentId) {
+        lines.push(`- **Active agent:** ${m.activeAgentId} — ${m.activeAgentLabel ?? ""}`);
+      }
       lines.push("");
     }
   }
@@ -51,6 +66,10 @@ async function writeHeartbeatMd(entries: HeartbeatEntry[], pendingMissions: Miss
   await writeFile(HEARTBEAT_PATH, lines.join("\n"), "utf8");
 }
 
+function uniqueEventId(suffix: string): string {
+  return `evt-${Date.now()}-${Math.random().toString(36).slice(2, 7)}-${suffix}`;
+}
+
 export const dynamic = "force-dynamic";
 
 export async function POST() {
@@ -59,132 +78,73 @@ export async function POST() {
     const db = await getDb();
     const entries: HeartbeatEntry[] = [];
 
-    // Find all executing/planned missions
-    const activeDocs = await db.collection("missions")
-      .find({ status: { $in: ["executing", "planned", "queued"] } })
+    // Recovery: find missions stuck in executing/analyzing for too long
+    // with no active agent. The orchestrator either crashed or the dev
+    // server restarted mid-flight.
+    const candidates = await db.collection("missions")
+      .find({ status: { $in: ["executing", "analyzing"] } })
       .toArray();
-    const activeMissions = activeDocs.map(({ _id, ...m }) => { void _id; return m as unknown as Mission; });
 
-    let workDone = false;
+    let resumedCount = 0;
+    for (const doc of candidates) {
+      const { _id, ...rest } = doc;
+      void _id;
+      const m = rest as unknown as Mission;
+      const updatedAge = Date.now() - new Date(m.updatedAt).getTime();
+      const hasInProgress = m.tasks.some((t) => t.status === "in_progress");
+      const isReallyStuck =
+        !m.activeAgentId &&
+        !hasInProgress &&
+        updatedAge > STUCK_THRESHOLD_MS;
 
-    for (const mission of activeMissions) {
-      if (mission.status === "planned" || mission.status === "queued") {
-        // Auto-advance to executing the first pending task
-        const nextIdx = mission.tasks.findIndex((t) => t.status === "pending");
-        if (nextIdx !== -1) {
-          const task = mission.tasks[nextIdx];
-          const updatedTasks = mission.tasks.map((t, i) =>
-            i === nextIdx ? { ...t, status: "in_progress" as const, startedAt: now, updatedAt: now } : t
-          );
-          await db.collection("missions").updateOne(
-            { id: mission.id },
-            { $set: { status: "executing", tasks: updatedTasks, currentTaskIndex: nextIdx, heartbeatAt: now, updatedAt: now } }
-          );
-          broadcast({
-            id: `evt-${Date.now()}-hb`,
-            type: "task_started",
-            workspaceId: mission.workspaceId,
-            missionId: mission.id,
-            taskId: task.id,
-            agentId: task.agentId,
-            agentName: task.agentName,
-            title: `[Heartbeat] ${task.agentName} started: "${task.title}"`,
-            detail: `Task ${task.sequenceNumber} of ${mission.tasks.length}`,
-            timestamp: now,
-          });
-          entries.push({
-            id: `hb-${Date.now()}`,
-            workspaceId: mission.workspaceId,
-            missionId: mission.id,
-            taskId: task.id,
-            action: "task_triggered",
-            message: `Task "${task.title}" triggered for ${task.agentName} in mission "${mission.title}"`,
-            timestamp: now,
-          });
-          workDone = true;
-        }
-      } else if (mission.status === "executing") {
-        // Check if current task needs completion (simulation: mark in_progress tasks as done after 5 min)
-        const inProgressTask = mission.tasks.find((t) => t.status === "in_progress");
-        if (inProgressTask?.startedAt) {
-          const ageMs = Date.now() - new Date(inProgressTask.startedAt).getTime();
-          // In simulation: complete tasks after 5 minutes
-          if (ageMs > 5 * 60 * 1000) {
-            const updatedTasks = mission.tasks.map((t) =>
-              t.id === inProgressTask.id ? { ...t, status: "done" as const, completedAt: now, output: `Completed by ${t.agentName}.`, updatedAt: now } : t
-            );
-            // Find next pending task
-            const nextPending = updatedTasks.findIndex((t) => t.status === "pending");
-            let newStatus: Mission["status"] = "executing";
-            let nextTasks = updatedTasks;
-            if (nextPending !== -1) {
-              nextTasks = updatedTasks.map((t, i) =>
-                i === nextPending ? { ...t, status: "in_progress" as const, startedAt: now, updatedAt: now } : t
-              );
-            } else if (updatedTasks.every((t) => t.status === "done")) {
-              newStatus = "done";
-            }
+      if (!isReallyStuck) continue;
 
-            await db.collection("missions").updateOne(
-              { id: mission.id },
-              { $set: { tasks: nextTasks, status: newStatus, heartbeatAt: now, updatedAt: now } }
-            );
+      // Recover by re-firing the orchestrator
+      void executeNextTask(m.id).catch((err) => {
+        console.error(`[heartbeat] resume failed for ${m.id}:`, err);
+      });
 
-            broadcast({
-              id: `evt-${Date.now()}`,
-              type: newStatus === "done" ? "mission_done" : "task_completed",
-              workspaceId: mission.workspaceId,
-              missionId: mission.id,
-              taskId: inProgressTask.id,
-              agentId: inProgressTask.agentId,
-              agentName: inProgressTask.agentName,
-              title: newStatus === "done"
-                ? `Mission "${mission.title}" complete!`
-                : `${inProgressTask.agentName} completed: "${inProgressTask.title}"`,
-              timestamp: now,
-            });
-
-            entries.push({
-              id: `hb-${Date.now()}`,
-              workspaceId: mission.workspaceId,
-              missionId: mission.id,
-              taskId: inProgressTask.id,
-              action: "task_triggered",
-              message: `Task "${inProgressTask.title}" completed; ${newStatus === "done" ? "mission done" : "next task started"}`,
-              timestamp: now,
-            });
-            workDone = true;
-          }
-        }
-      }
+      entries.push({
+        id: `hb-${Date.now()}-${m.id}`,
+        workspaceId: m.workspaceId,
+        missionId: m.id,
+        action: "task_triggered",
+        message: `Heartbeat resumed stuck mission "${m.title}"`,
+        timestamp: now,
+      });
+      resumedCount++;
     }
 
-    if (!workDone) {
+    if (resumedCount === 0) {
       entries.push({
         id: `hb-${Date.now()}`,
         action: "no_work",
-        message: "Heartbeat tick — no pending work",
+        message: "Heartbeat tick — no stuck missions",
         timestamp: now,
       });
     }
 
     broadcast({
-      id: `evt-${Date.now()}-hb`,
+      id: uniqueEventId("hb"),
       type: "heartbeat_tick",
-      title: workDone ? `Heartbeat: triggered ${entries.length} action(s)` : "Heartbeat tick — all clear",
+      title: resumedCount > 0
+        ? `Heartbeat: resumed ${resumedCount} stuck mission${resumedCount === 1 ? "" : "s"}`
+        : "Heartbeat tick — all clear",
       timestamp: now,
     });
 
     // Refresh active missions for HEARTBEAT.md
     const refreshedDocs = await db.collection("missions")
-      .find({ status: { $in: ["executing", "planned", "queued", "clarification"] } })
+      .find({ status: { $in: ["executing", "planned", "queued", "clarification", "analyzing"] } })
       .toArray();
     const refreshed = refreshedDocs.map(({ _id, ...m }) => { void _id; return m as unknown as Mission; });
 
     await writeHeartbeatMd(entries, refreshed).catch(() => {});
 
-    return NextResponse.json({ ok: true, entries, workDone });
+    return NextResponse.json({ ok: true, entries, resumedCount });
   } catch (err) {
     return NextResponse.json({ ok: false, error: String(err) }, { status: 500 });
   }
 }
+
+void readHeartbeatMd;

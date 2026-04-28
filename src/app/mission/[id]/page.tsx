@@ -20,6 +20,7 @@ function StatusStepper({ status }: { status: Mission["status"] }) {
   const currentIdx = STATUS_STEPS.indexOf(status);
   const labels: Record<Mission["status"], string> = {
     received: "Received", clarification: "Clarifying", analyzing: "Analyzing",
+    planning_failed: "Plan Failed",
     planned: "Planned", queued: "Queued", executing: "Executing", paused: "Paused", done: "Done",
   };
   const steps = STATUS_STEPS.filter((s) => s !== "paused");

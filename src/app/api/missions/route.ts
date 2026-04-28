@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/mongodb";
-import type { Mission, ClarificationMessage } from "@/lib/mission-types";
+import type { Mission } from "@/lib/mission-types";
 import { broadcast } from "@/app/api/events/route";
 import { SQUAD } from "@/lib/team-store";
+import { runShuriClarification } from "@/lib/mission-orchestrator";
 
 // Pick the best analyst for a mission based on description keywords
 function pickAnalyst(description: string) {
@@ -17,35 +18,6 @@ function pickAnalyst(description: string) {
     return SQUAD.find((a) => a.id === "rocket")!;
   }
   return SQUAD.find((a) => a.id === "shuri")!; // default: product analyst
-}
-
-// Generate initial clarifying questions from the analyst
-function generateClarifyingQuestions(analyst: typeof SQUAD[0], missionTitle: string): ClarificationMessage[] {
-  const now = new Date().toISOString();
-  const questions: string[] = [];
-
-  questions.push(
-    `Hi! I'm ${analyst.name}, your ${analyst.title}. To make sure we build exactly what you need, I have a few questions about the mission:\n\n` +
-    `**1.** What is the primary outcome you want from "${missionTitle}"? What does "done" look like?`
-  );
-  questions.push(
-    `**2.** Are there any existing systems, codebases, or constraints I should be aware of?`
-  );
-  questions.push(
-    `**3.** Who are the end users or stakeholders? Any specific requirements or preferences from them?`
-  );
-  questions.push(
-    `**4.** What is the rough timeframe or deadline, and are there any hard technical constraints (language, framework, infra)?`
-  );
-
-  return questions.map((content, i) => ({
-    id: `cq-${Date.now()}-${i}`,
-    role: "agent" as const,
-    agentId: analyst.id,
-    agentName: analyst.name,
-    content,
-    createdAt: now,
-  }));
 }
 
 function backfillMission(m: Record<string, unknown>): Mission {
@@ -73,9 +45,8 @@ export async function POST(req: NextRequest) {
     const now = new Date().toISOString();
     const db = await getDb();
 
-    // Pick analyst agent
+    // Pick analyst agent (drives clarification phase only — Fury handles planning)
     const analyst = pickAnalyst(body.description);
-    const initialQuestions = generateClarifyingQuestions(analyst, body.title);
 
     const mission: Mission = {
       id: `msn-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -85,7 +56,8 @@ export async function POST(req: NextRequest) {
       status: "clarification",
       analystId: analyst.id,
       analystName: analyst.name,
-      clarification: initialQuestions,
+      // Empty for now — Shuri's session will populate this dynamically
+      clarification: [],
       researchNotes: "",
       tasks: [],
       taskSummaries: [],
@@ -111,19 +83,14 @@ export async function POST(req: NextRequest) {
       agentId: analyst.id,
       agentName: analyst.name,
       title: `Mission received: "${body.title}"`,
-      detail: `${analyst.name} will gather requirements`,
+      detail: `${analyst.name} is analyzing whether clarification is needed`,
       timestamp: now,
     });
 
-    broadcast({
-      id: `evt-${Date.now()}-cla`,
-      type: "clarification_started",
-      workspaceId: body.workspaceId,
-      missionId: mission.id,
-      agentId: analyst.id,
-      agentName: analyst.name,
-      title: `${analyst.name} asking clarifying questions`,
-      timestamp: now,
+    // Spawn Shuri session in background — she decides whether questions are
+    // needed and what to ask. If none needed, she'll fast-track to Fury.
+    void runShuriClarification(mission.id).catch((err) => {
+      console.error("[missions/POST] runShuriClarification error:", err);
     });
 
     return NextResponse.json({ ok: true, mission });

@@ -5,7 +5,7 @@ import {
   ArrowLeft, ChevronRight, KanbanSquare, Loader2,
   CheckCheck, Play, Clock, AlertCircle, Pause, Radio,
   Target, Circle, User, HelpCircle, Flame, MessageSquare,
-  AlertTriangle, Plus,
+  AlertTriangle, Plus, Eye, ShieldAlert,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -65,32 +65,40 @@ const MISSION_TASK_COLS: {
   color: string;
   icon: React.ElementType;
 }[] = [
-  { id: "pending",     label: "Pending",     color: "text-zinc-400",   icon: Clock },
-  { id: "in_progress", label: "In Progress", color: "text-amber-400",  icon: Play },
-  { id: "done",        label: "Done",        color: "text-emerald-400",icon: CheckCheck },
-  { id: "failed",      label: "Failed",      color: "text-red-400",    icon: AlertCircle },
+  { id: "pending",     label: "Pending",     color: "text-zinc-400",    icon: Clock },
+  { id: "in_progress", label: "In Progress", color: "text-amber-400",   icon: Play },
+  { id: "review",      label: "In Review",   color: "text-violet-400",  icon: Eye },
+  { id: "done",        label: "Done",        color: "text-emerald-400", icon: CheckCheck },
+  { id: "failed",      label: "Failed",      color: "text-red-400",     icon: AlertCircle },
+  { id: "blocked",     label: "Blocked",     color: "text-yellow-400",  icon: ShieldAlert },
 ];
 
 const STATUS_LABEL: Record<MissionStatus, string> = {
-  received:      "Received",
-  clarification: "Clarifying",
-  analyzing:     "Analyzing",
-  planned:       "Planned",
-  queued:        "Queued",
-  executing:     "Executing",
-  paused:        "Paused",
-  done:          "Done",
+  received:         "Received",
+  clarification:    "Clarifying",
+  analyzing:        "Analyzing",
+  planning_failed:  "Plan Failed",
+  planned:          "Planned",
+  queued:           "Queued",
+  executing:        "Executing",
+  paused:           "Paused",
+  done:             "Done",
 };
 
+function capitalizeAgent(id: string): string {
+  return id.charAt(0).toUpperCase() + id.slice(1);
+}
+
 const STATUS_COLOR: Record<MissionStatus, string> = {
-  received:      "text-[#8b949e]",
-  clarification: "text-[#d2a8ff]",
-  analyzing:     "text-[#d2a8ff]",
-  planned:       "text-[#58a6ff]",
-  queued:        "text-[#58a6ff]",
-  executing:     "text-[#ffa657]",
-  paused:        "text-[#e3b341]",
-  done:          "text-[#3fb950]",
+  received:         "text-[#8b949e]",
+  clarification:    "text-[#d2a8ff]",
+  analyzing:        "text-[#d2a8ff]",
+  planning_failed:  "text-[#f85149]",
+  planned:          "text-[#58a6ff]",
+  queued:           "text-[#58a6ff]",
+  executing:        "text-[#ffa657]",
+  paused:           "text-[#e3b341]",
+  done:             "text-[#3fb950]",
 };
 
 // ─── Page ───────────────────────────────────────────────────────
@@ -131,26 +139,21 @@ export default function MissionBoardPage() {
     return () => clearInterval(id);
   }, []);
 
-  // Derive agent working status (from both systems)
+  // Derive agent working status from mission.activeAgentId (orchestrator
+  // sets this as work transitions) and from team-store tasks (Squad HQ).
   const workingAgentIds = new Set<string>();
   const agentCurrentWork = new Map<string, string>();
 
-  // From missions
   for (const m of missions) {
-    if (m.status === "executing") {
-      for (const t of m.tasks) {
-        if (t.status === "in_progress") {
-          workingAgentIds.add(t.agentId);
-          agentCurrentWork.set(t.agentId, t.title);
-        }
+    // Single source of truth: orchestrator-tracked active agent
+    if (m.activeAgentId) {
+      workingAgentIds.add(m.activeAgentId);
+      if (!agentCurrentWork.has(m.activeAgentId)) {
+        agentCurrentWork.set(m.activeAgentId, m.activeAgentLabel ?? "Working");
       }
     }
-    if ((m.status === "clarification" || m.status === "analyzing") && m.analystId) {
-      workingAgentIds.add(m.analystId);
-      agentCurrentWork.set(m.analystId, m.status === "clarification" ? "Clarifying…" : "Analyzing…");
-    }
   }
-  // From team-store tasks
+  // From team-store tasks (separate Squad HQ system)
   for (const t of tasks) {
     if (t.status === "in_progress" && t.assigneeId) {
       workingAgentIds.add(t.assigneeId);
@@ -413,6 +416,28 @@ function MissionCard({ mission, onClick }: { mission: Mission; onClick: () => vo
   const inProgressTask = mission.tasks.find((t) => t.status === "in_progress");
   const progress = totalTasks > 0 ? doneTasks / totalTasks : 0;
 
+  // Detect a stuck mission: in analyzing/executing for >2 min with no recent
+  // activeAgent updates, or in planning_failed.
+  const updatedAge = Date.now() - new Date(mission.updatedAt).getTime();
+  const isStuck =
+    mission.status === "planning_failed" ||
+    ((mission.status === "analyzing" || mission.status === "executing") &&
+      !mission.activeAgentId &&
+      updatedAge > 120_000);
+
+  async function handleResume(e: React.MouseEvent) {
+    e.stopPropagation();
+    try {
+      if (mission.status === "planning_failed" || mission.status === "analyzing") {
+        await fetch(`/api/missions/${mission.id}/plan`, { method: "POST" });
+      } else if (mission.status === "executing" || mission.status === "paused") {
+        await fetch(`/api/missions/${mission.id}/execute`, { method: "POST" });
+      }
+    } catch (err) {
+      console.error("resume failed:", err);
+    }
+  }
+
   return (
     <button
       onClick={onClick}
@@ -421,15 +446,22 @@ function MissionCard({ mission, onClick }: { mission: Mission; onClick: () => vo
       <p className="text-xs font-semibold text-[#e6edf3] leading-snug line-clamp-2 mb-2">
         {mission.title}
       </p>
-      <div className="flex items-center gap-1.5 mb-2">
+      <div className="flex items-center gap-1.5 mb-2 flex-wrap">
         <span className={cn("text-[10px] font-medium", STATUS_COLOR[mission.status])}>
           {STATUS_LABEL[mission.status]}
         </span>
-        {mission.status === "executing" && inProgressTask && (
+        {/* Live "who's working right now" — set by orchestrator */}
+        {mission.activeAgentId && mission.activeAgentLabel && (
+          <span className="text-[10px] text-[#3fb950]">
+            · {capitalizeAgent(mission.activeAgentId)} · {mission.activeAgentLabel}
+          </span>
+        )}
+        {/* Fallback labels when activeAgentId is not set */}
+        {!mission.activeAgentId && mission.status === "executing" && inProgressTask && (
           <span className="text-[10px] text-[#8b949e]">· {inProgressTask.agentName}</span>
         )}
-        {(mission.status === "clarification" || mission.status === "analyzing") && mission.analystName && (
-          <span className="text-[10px] text-[#8b949e]">· {mission.analystName}</span>
+        {!mission.activeAgentId && mission.status === "clarification" && mission.analystName && (
+          <span className="text-[10px] text-[#8b949e]">· {mission.analystName} (waiting on you)</span>
         )}
       </div>
       {totalTasks > 0 && (
@@ -444,6 +476,20 @@ function MissionCard({ mission, onClick }: { mission: Mission; onClick: () => vo
               style={{ width: `${progress * 100}%` }}
             />
           </div>
+        </div>
+      )}
+      {mission.status === "planning_failed" && mission.planError && (
+        <p className="text-[10px] text-[#f85149] line-clamp-3 leading-snug mb-2 border-t border-[#f85149]/20 pt-1.5">
+          {mission.planError}
+        </p>
+      )}
+      {isStuck && (
+        <div
+          onClick={handleResume}
+          role="button"
+          className="text-[10px] mb-2 px-2 py-1.5 rounded-md bg-[#e3b341]/10 border border-[#e3b341]/30 text-[#e3b341] hover:bg-[#e3b341]/20 transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+        >
+          {mission.status === "planning_failed" ? "Retry planning" : "Resume mission"}
         </div>
       )}
       <div className="flex items-center justify-between text-[10px] text-[#484f58] mt-1">
@@ -509,18 +555,27 @@ function MissionTaskCard({ task }: { task: MissionTask }) {
   const statusColor: Record<MissionTask["status"], string> = {
     pending:     "text-[#8b949e]",
     in_progress: "text-[#ffa657]",
+    review:      "text-[#d2a8ff]",
     done:        "text-[#3fb950]",
     failed:      "text-[#f85149]",
+    blocked:     "text-[#e3b341]",
   };
   const statusLabel: Record<MissionTask["status"], string> = {
-    pending: "Pending", in_progress: "In Progress", done: "Done", failed: "Failed",
+    pending:     "Pending",
+    in_progress: "In Progress",
+    review:      "In Review",
+    done:        "Done",
+    failed:      "Failed",
+    blocked:     "Blocked",
   };
 
   return (
     <div className={cn(
       "p-3 rounded-lg border transition-colors space-y-2",
       task.status === "in_progress" ? "bg-[#1c2128] border-[#ffa657]/20"
+        : task.status === "review" ? "bg-[#1c2128] border-[#d2a8ff]/20"
         : task.status === "failed" ? "bg-[#1c2128] border-[#f85149]/20"
+        : task.status === "blocked" ? "bg-[#1c2128] border-[#e3b341]/20"
         : "bg-[#161b22] border-[#30363d]"
     )}>
       <div className="flex items-start gap-2">
@@ -540,6 +595,23 @@ function MissionTaskCard({ task }: { task: MissionTask }) {
           {task.output}
         </p>
       )}
+
+      {task.reviewOutput && (task.status === "review" || task.status === "blocked") && (
+        <p className="text-[10px] text-[#d2a8ff] line-clamp-2 leading-snug border-t border-[#21262d] pt-1.5">
+          {task.reviewOutput}
+        </p>
+      )}
+
+      {(task.retryCount ?? 0) > 0 && task.status !== "done" && (
+        <p className="text-[10px] text-[#e3b341]">Attempt {(task.retryCount ?? 0) + 1}/3</p>
+      )}
+
+      {task.errorMessage && task.status === "failed" && (
+        <p className="text-[10px] text-[#f85149] line-clamp-2 leading-snug border-t border-[#21262d] pt-1.5">
+          {task.errorMessage}
+        </p>
+      )}
+
       <p className="text-[10px] text-[#30363d]">{elapsedShort(task.updatedAt)}</p>
     </div>
   );

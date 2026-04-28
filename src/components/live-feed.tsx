@@ -11,14 +11,21 @@ import type { LiveEvent, LiveEventType } from "@/lib/mission-types";
 const EVENT_CONFIG: Record<LiveEventType, { icon: React.ElementType; color: string; dotColor: string }> = {
   mission_created:       { icon: Rocket,       color: "text-[#58a6ff]",   dotColor: "bg-[#58a6ff]" },
   mission_queued:        { icon: Rocket,       color: "text-[#d2a8ff]",   dotColor: "bg-[#d2a8ff]" },
+  mission_analyzing:     { icon: Cpu,          color: "text-[#d2a8ff]",   dotColor: "bg-[#d2a8ff]" },
+  planning_failed:       { icon: AlertCircle,  color: "text-[#f85149]",   dotColor: "bg-[#f85149]" },
   clarification_started: { icon: HelpCircle,   color: "text-[#ffa657]",   dotColor: "bg-[#ffa657]" },
   question_asked:        { icon: HelpCircle,   color: "text-[#ffa657]",   dotColor: "bg-[#ffa657]" },
   answer_given:          { icon: MessageSquare,color: "text-[#8b949e]",   dotColor: "bg-[#8b949e]" },
   planning_started:      { icon: Cpu,          color: "text-[#d2a8ff]",   dotColor: "bg-[#d2a8ff]" },
   tasks_created:         { icon: CheckCheck,   color: "text-[#3fb950]",   dotColor: "bg-[#3fb950]" },
+  task_added:            { icon: Zap,          color: "text-[#58a6ff]",   dotColor: "bg-[#58a6ff]" },
   task_started:          { icon: Zap,          color: "text-[#ffa657]",   dotColor: "bg-[#ffa657]" },
   task_completed:        { icon: CheckCheck,   color: "text-[#3fb950]",   dotColor: "bg-[#3fb950]" },
   task_failed:           { icon: AlertCircle,  color: "text-[#f85149]",   dotColor: "bg-[#f85149]" },
+  task_approved:         { icon: CheckCheck,   color: "text-[#39d353]",   dotColor: "bg-[#39d353]" },
+  task_rejected:         { icon: AlertCircle,  color: "text-[#e3b341]",   dotColor: "bg-[#e3b341]" },
+  task_retrying:         { icon: Cpu,          color: "text-[#e3b341]",   dotColor: "bg-[#e3b341]" },
+  task_escalated:        { icon: AlertCircle,  color: "text-[#f85149]",   dotColor: "bg-[#f85149]" },
   mission_done:          { icon: CheckCheck,   color: "text-[#39d353]",   dotColor: "bg-[#39d353]" },
   heartbeat_tick:        { icon: Radio,        color: "text-[#8b949e]",   dotColor: "bg-[#484f58]" },
   workspace_created:     { icon: Globe,        color: "text-[#58a6ff]",   dotColor: "bg-[#58a6ff]" },
@@ -72,8 +79,12 @@ export function LiveFeed({ className, maxEvents = 80, missionId }: LiveFeedProps
         if (!raw || raw.startsWith(":")) return;
         try {
           const event = JSON.parse(raw) as LiveEvent;
-          setEvents((prev) => [event, ...prev].slice(0, maxEvents));
-          // Auto-scroll to top (newest)
+          // Dedupe by id — protects against duplicate event ids from any
+          // upstream collision (heartbeat, parallel orchestrators, etc.)
+          setEvents((prev) => {
+            if (prev.some((e) => e.id === event.id)) return prev;
+            return [event, ...prev].slice(0, maxEvents);
+          });
           setTimeout(() => {
             if (scrollRef.current) scrollRef.current.scrollTop = 0;
           }, 50);

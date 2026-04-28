@@ -14,14 +14,15 @@ import { cn } from "@/lib/utils";
 import type { Mission, Workspace } from "@/lib/mission-types";
 
 const STATUS_CONFIG: Record<Mission["status"], { label: string; color: string; bg: string; icon: React.ElementType }> = {
-  received:      { label: "Received",    color: "text-[#8b949e]",  bg: "bg-[#8b949e]/10",  icon: Clock },
-  clarification: { label: "Clarifying",  color: "text-[#ffa657]",  bg: "bg-[#ffa657]/10",  icon: AlertCircle },
-  analyzing:     { label: "Analyzing",   color: "text-[#d2a8ff]",  bg: "bg-[#d2a8ff]/10",  icon: Loader2 },
-  planned:       { label: "Planned",     color: "text-[#58a6ff]",  bg: "bg-[#58a6ff]/10",  icon: CheckCheck },
-  queued:        { label: "Queued",      color: "text-[#8b949e]",  bg: "bg-[#8b949e]/10",  icon: Clock },
-  executing:     { label: "Executing",   color: "text-[#ffa657]",  bg: "bg-[#ffa657]/10",  icon: Loader2 },
-  paused:        { label: "Paused",      color: "text-[#8b949e]",  bg: "bg-[#8b949e]/10",  icon: Clock },
-  done:          { label: "Done",        color: "text-[#3fb950]",  bg: "bg-[#3fb950]/10",  icon: CheckCheck },
+  received:         { label: "Received",    color: "text-[#8b949e]",  bg: "bg-[#8b949e]/10",  icon: Clock },
+  clarification:    { label: "Clarifying",  color: "text-[#ffa657]",  bg: "bg-[#ffa657]/10",  icon: AlertCircle },
+  analyzing:        { label: "Analyzing",   color: "text-[#d2a8ff]",  bg: "bg-[#d2a8ff]/10",  icon: Loader2 },
+  planning_failed:  { label: "Plan Failed", color: "text-[#f85149]",  bg: "bg-[#f85149]/10",  icon: AlertCircle },
+  planned:          { label: "Planned",     color: "text-[#58a6ff]",  bg: "bg-[#58a6ff]/10",  icon: CheckCheck },
+  queued:           { label: "Queued",      color: "text-[#8b949e]",  bg: "bg-[#8b949e]/10",  icon: Clock },
+  executing:        { label: "Executing",   color: "text-[#ffa657]",  bg: "bg-[#ffa657]/10",  icon: Loader2 },
+  paused:           { label: "Paused",      color: "text-[#8b949e]",  bg: "bg-[#8b949e]/10",  icon: Clock },
+  done:             { label: "Done",        color: "text-[#3fb950]",  bg: "bg-[#3fb950]/10",  icon: CheckCheck },
 };
 
 function MissionCard({ mission, onClick, onDelete }: {
