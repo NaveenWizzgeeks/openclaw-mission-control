@@ -93,10 +93,56 @@ function handleHealth(res: ServerResponse) {
     JSON.stringify({
       ok: true,
       ts: Date.now(),
+      daemonState: daemonStateRef,
+      gatewayState: linkRef?.getState() ?? "idle",
       sseClients: clients.size,
       busListeners: bus.subscriberCount(),
     }),
   );
+}
+
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("error", reject);
+  });
+}
+
+async function handleGatewayRequest(req: IncomingMessage, res: ServerResponse) {
+  if (!linkRef) {
+    res.writeHead(503, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: false, error: "gateway link not attached" }));
+    return;
+  }
+  let body: { method?: string; params?: Record<string, unknown>; timeoutMs?: number };
+  try {
+    body = JSON.parse((await readBody(req)) || "{}");
+  } catch {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: false, error: "bad JSON body" }));
+    return;
+  }
+  const { method, params, timeoutMs } = body;
+  if (!method || typeof method !== "string") {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: false, error: "method required" }));
+    return;
+  }
+  try {
+    const startedAt = Date.now();
+    const payload = await linkRef.request(method, params ?? {}, timeoutMs);
+    const tookMs = Date.now() - startedAt;
+    log.debug(`gateway.${method} ok in ${tookMs}ms`);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, data: payload, tookMs }));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "unknown";
+    log.warn(`gateway.${method} failed: ${message}`);
+    res.writeHead(502, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: false, error: message }));
+  }
 }
 
 function notFound(res: ServerResponse) {
@@ -115,6 +161,10 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === "GET" && url.pathname === "/events") {
     attachSseClient(req, res);
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/gateway/request") {
+    void handleGatewayRequest(req, res);
     return;
   }
   notFound(res);
